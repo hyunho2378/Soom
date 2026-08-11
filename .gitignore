@@ -1,0 +1,7 @@
+# 비밀값은 절대 커밋하지 않는다
+.env
+.env.*
+!.env.example
+
+node_modules/
+*.log

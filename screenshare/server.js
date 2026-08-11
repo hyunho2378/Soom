@@ -8,7 +8,6 @@ const express = require("express");
 const { WebSocketServer } = require("ws");
 const http = require("http");
 const path = require("path");
-const fs = require("fs");
 const multer = require("multer");
 const session = require("express-session");
 const passport = require("passport");
@@ -18,10 +17,6 @@ const db = require("./db");
 
 // 업로드 이미지와 기록물 영속화 파일 경로. 없으면 만든다.
 // 파일은 Vercel Blob에 올린다. 로컬 디스크에는 아무것도 안 남긴다(Render 재배포에도 살아남게).
-const DATA_DIR = path.join(__dirname, "data");
-const RECORDS_FILE = path.join(DATA_DIR, "records.json");
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
 const blobReady = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 if (!blobReady) {
   console.warn("파일 업로드 꺼짐: BLOB_READ_WRITE_TOKEN이 비어 있습니다.");
@@ -49,24 +44,91 @@ const PRACTICE_ITEMS = [
 ];
 const ITEM_MAP = new Map(PRACTICE_ITEMS.map((it) => [it.code, it]));
 
-// roomId -> [record, ...]. 참가자가 모두 나가도 기록물은 유지한다.
-let roomRecords = loadRecords();
+// 정본은 DB의 records와 record_files다. 아래 Map은 방마다 한 번만 읽어 두는 캐시다.
+// DB가 없으면 이 Map만으로 동작한다(영속화 없음).
+const roomRecords = new Map();
 
-function loadRecords() {
+// DB 행을 클라이언트가 쓰는 모양으로 바꾼다.
+function toRecord(row, files) {
+  return {
+    id: String(row.id),
+    name: row.author_name,
+    itemCode: row.item_code,
+    itemLabel: row.item_label,
+    track: row.track,
+    summary: row.summary || "",
+    files: files.map((f) => ({
+      url: f.blob_url,
+      filename: f.filename,
+      mimeType: f.mime_type,
+      size: Number(f.size_bytes),
+      kind: f.kind,
+    })),
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+// 방 기록물을 처음 볼 때 DB에서 한 번 읽어 캐시에 채운다.
+async function loadRoomRecords(room) {
+  if (roomRecords.has(room)) return roomRecords.get(room);
+  if (!db.isEnabled()) {
+    roomRecords.set(room, []);
+    return [];
+  }
   try {
-    const obj = JSON.parse(fs.readFileSync(RECORDS_FILE, "utf-8"));
-    return new Map(Object.entries(obj));
+    const { rows } = await db.query(
+      "SELECT * FROM records WHERE room = $1 ORDER BY created_at, id",
+      [room]
+    );
+    const ids = rows.map((r) => r.id);
+    const filesByRecord = new Map(ids.map((id) => [String(id), []]));
+    if (ids.length) {
+      const { rows: fileRows } = await db.query(
+        "SELECT * FROM record_files WHERE record_id = ANY($1::bigint[]) ORDER BY id",
+        [ids]
+      );
+      fileRows.forEach((f) => filesByRecord.get(String(f.record_id)).push(f));
+    }
+    const list = rows.map((r) => toRecord(r, filesByRecord.get(String(r.id))));
+    roomRecords.set(room, list);
+    return list;
   } catch (e) {
-    return new Map();
+    console.error("기록물 불러오기 실패:", e.message);
+    roomRecords.set(room, []);
+    return [];
   }
 }
 
-function saveRecords() {
-  try {
-    fs.writeFileSync(RECORDS_FILE, JSON.stringify(Object.fromEntries(roomRecords), null, 2));
-  } catch (e) {
-    console.error("기록물 저장 실패:", e.message);
+// 기록물 한 건을 DB에 넣고 클라이언트 모양으로 돌려준다.
+async function insertRecord({ room, name, userId, item, summary, files }) {
+  if (!db.isEnabled()) {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      itemCode: item.code,
+      itemLabel: item.label,
+      track: item.track,
+      summary,
+      files,
+      createdAt: Date.now(),
+    };
   }
+  const { rows } = await db.query(
+    `INSERT INTO records (room, author_name, author_user_id, item_code, item_label, track, summary)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [room, name, userId, item.code, item.label, item.track, summary]
+  );
+  const row = rows[0];
+  const saved = [];
+  for (const f of files) {
+    const { rows: fr } = await db.query(
+      `INSERT INTO record_files (record_id, blob_url, filename, mime_type, size_bytes, kind)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [row.id, f.url, f.filename, f.mimeType, f.size, f.kind]
+    );
+    saved.push(fr[0]);
+  }
+  return toRecord(row, saved);
 }
 
 const app = express();
@@ -422,21 +484,25 @@ app.post("/api/records", upload.array("files", 10), async (req, res) => {
     return res.status(502).json({ error: "파일을 저장하지 못했습니다. 다시 시도하세요." });
   }
 
-  const record = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name,
-    itemCode: item.code,
-    itemLabel: item.label, // 라벨은 서버 정본에서만 만든다.
-    track: item.track,
-    summary,
-    files: uploaded,
-    createdAt: Date.now(),
-  };
+  let record;
+  try {
+    // itemLabel과 track은 서버 정본(PRACTICE_ITEMS)에서만 채운다.
+    record = await insertRecord({
+      room,
+      name,
+      userId: req.user ? req.user.id : null,
+      item,
+      summary,
+      files: uploaded,
+    });
+  } catch (e) {
+    console.error("기록물 저장 실패:", e.message);
+    await removeFromBlob(uploaded.map((f) => f.url));
+    return res.status(500).json({ error: "기록물을 저장하지 못했습니다." });
+  }
 
-  const list = roomRecords.get(room) || [];
+  const list = await loadRoomRecords(room);
   list.push(record);
-  roomRecords.set(room, list);
-  saveRecords();
 
   broadcastToRoom(room, { type: "record-added", record });
   res.json({ ok: true, record });
@@ -451,10 +517,17 @@ app.post("/api/records/reset", requireSpeaker, async (req, res) => {
     return res.status(400).json({ error: "확인 문구가 일치하지 않습니다." });
   }
 
-  const list = roomRecords.get(room) || [];
-  await removeFromBlob(list.flatMap((r) => (r.files || []).map((f) => f.url)));
+  const list = await loadRoomRecords(room);
+  // Blob 파일을 먼저 지우고, DB 행은 records를 지우면 record_files가 CASCADE로 함께 사라진다.
+  const urls = list.flatMap((r) => (r.files || []).map((f) => f.url));
+  console.log(`방 ${room} 초기화: 기록물 ${list.length}건, 파일 ${urls.length}개 삭제`);
+  await removeFromBlob(urls);
+  if (db.isEnabled()) {
+    await db.query("DELETE FROM records WHERE room = $1", [room]).catch((e) => {
+      console.error("기록물 삭제 실패:", e.message);
+    });
+  }
   roomRecords.set(room, []);
-  saveRecords();
 
   broadcastToRoom(room, { type: "records-reset" });
   res.json({ ok: true });
@@ -494,7 +567,7 @@ wss.on("connection", (ws, req, sessionUser) => {
       broadcastParticipants(currentRoomId);
 
       // 이 방의 기존 기록물을 새로 들어온 사람에게 보낸다.
-      send(ws, { type: "records-init", list: roomRecords.get(currentRoomId) || [] });
+      loadRoomRecords(currentRoomId).then((list) => send(ws, { type: "records-init", list }));
 
       // 이미 발표 중인 사람이 있으면, 새로 들어온 사람에게 알려준다.
       if (room.broadcasterId && room.broadcasterId !== clientId) {
@@ -564,6 +637,26 @@ const PORT = process.env.PORT || 3000;
 
 // connect-pg-simple은 세션 표를 첫 세션 저장 때 만든다. 그러면 실패가 하필 첫 로그인 순간에 드러난다.
 // 부팅 때 한 번 건드려 미리 만들고, 실패하면 여기서 로그로 잡는다.
+// Render 무료 플랜은 유휴 시 잠들었다 다시 뜬다. 그때 메모리 Map이 비어 버리면
+// DB는 active라고 하는데 코드는 거절되는 상태가 된다. 부팅 때 활성 방을 되살린다.
+async function restoreRooms() {
+  if (!db.isEnabled()) return 0;
+  try {
+    const { rows } = await db.query("SELECT code, speaker_user_id FROM rooms WHERE active = true");
+    rows.forEach((r) => {
+      rooms.set(r.code, {
+        clients: new Map(),
+        broadcasterId: null,
+        speakerUserId: r.speaker_user_id === null ? null : Number(r.speaker_user_id),
+      });
+    });
+    return rows.length;
+  } catch (e) {
+    console.error("방 복구 실패:", e.message);
+    return 0;
+  }
+}
+
 function warmSessionStore() {
   if (!sessionStore) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -577,9 +670,10 @@ function warmSessionStore() {
 // DB 연결과 스키마 적용을 끝낸 뒤 듣기 시작한다. DB가 없어도 서버는 뜬다.
 db.init().then(async (ok) => {
   const sess = await warmSessionStore();
+  const restored = await restoreRooms();
   server.listen(PORT, () => {
     console.log(
-      `서버 실행 중: http://localhost:${PORT} (DB ${ok ? "연결됨" : "미연결"}, 세션 ${sess ? "DB 저장" : "메모리"})`
+      `서버 실행 중: http://localhost:${PORT} (DB ${ok ? "연결됨" : "미연결"}, 세션 ${sess ? "DB 저장" : "메모리"}, 활성 방 ${restored}개 복구)`
     );
   });
 });

@@ -212,3 +212,34 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
   6MB 이미지 거절, 8MB 문서 통과.
 - 화면 7개 항목 통과. 카드 종류별 분기, PDF와 HTML의 열기 내려받기, 마크다운 서식 렌더,
   악성 마크다운(img onerror, script, javascript 링크)이 실행되지 않고 글자로만 남음, 첨부 미리보기 분기, 콘솔 오류 0건.
+
+## BUILD_SPEC 4단계: 기록물을 DB로 이전 (2026-08-11)
+- data/records.json 영속화를 걷어냈다. 정본은 records와 record_files 두 표다.
+  roomRecords Map은 그대로 두되 방마다 처음 접근할 때 DB에서 한 번 읽어 채우는 캐시로 바꿨다.
+- records-init은 loadRoomRecords로 DB에서 읽고, record-added는 DB에 넣은 뒤 브로드캐스트한다.
+  reset은 Blob 파일을 먼저 지우고 records를 지운다(record_files는 CASCADE로 따라 사라진다).
+- author_user_id는 세션이 있는 강연자가 올릴 때만 채우고 체험자는 비운다.
+- item_label과 track은 여전히 PRACTICE_ITEMS 서버 정본에서만 채운다.
+- DB가 없으면 Map만으로 동작한다(영속화 없음). 화면 공유가 DB에 묶이지 않는다.
+- data 폴더와 .gitignore 항목을 정리하고 안 쓰게 된 fs require도 지웠다.
+
+### 검증 중 찾아 고친 것 (실제 결함)
+- 서버를 재기동하면 rooms Map이 비어 DB는 active라는데 코드 입장이 거절됐다.
+  Render 무료 플랜은 유휴 시 잠들었다 깨므로 강의 중에 실제로 터질 문제다.
+  부팅 때 활성 방을 DB에서 되살리는 restoreRooms를 넣고 기동 로그에 복구 개수를 남긴다.
+
+### 검증 중 알아낸 것 (결함 아님)
+- 초기화 후 Blob 공개 URL이 한동안 200을 더 준다. CDN 엣지 캐시다.
+  Blob head API로 확인하면 원본은 지워져 있다. DB 행도 사라져 앱이 그 파일을 다시 가리키지 않는다.
+  검증 기준을 공개 URL 응답이 아니라 원본 존재 여부로 바꿨다.
+
+### 검증(16개 항목 통과)
+- records-init 빈 목록, 기록물 등록, 같은 방 참가자의 record-added 실시간 수신.
+- records 행 생성, item_label과 track이 서버 정본대로, 체험자 author_user_id null, 강연자일 때 채워짐.
+- record_files에 kind와 size 저장(image, markdown).
+- 서버 재기동 후 기록물 2건 유지, 파일 목록과 라벨과 요약 온전, created_at 정렬 유지, Blob 파일 열림.
+- 로컬 data 폴더 재생성 안 됨.
+- 초기화 브로드캐스트 수신, records와 record_files 동시 비움(CASCADE), Blob 원본 삭제.
+
+### 정리
+- 검증으로 만든 DB 행과 Blob 파일을 전부 지웠다. users 0, rooms 0, records 0, record_files 0, Blob 0개.
