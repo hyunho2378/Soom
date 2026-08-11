@@ -86,7 +86,7 @@ img{outline:var(--img-line); outline-offset:-1px}
 }
 /* 프레스 피드백은 누르는 순간(:active)에 준다. 목록 행은 제외한다 */
 button{transition:scale var(--dur-1) var(--ease)}
-button:not(:disabled):not(.dropdown-option):active{scale:.96}
+button:not(:disabled):not(.item-option):active{scale:.96}
 
 /* 입장 화면 */
 .join-screen{
@@ -120,11 +120,19 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .btn-primary:disabled{background:var(--blue-muted); cursor:not-allowed}
 .hint{font-size:13px; color:var(--red); margin-top:12px; min-height:16px}
 
-/* 입장 화면 분기 */
+/* 입장 화면 분기. 체험자가 다수라 코드 입장이 메인이고 구글 로그인이 서브다 */
 .join-pane{display:flex; flex-direction:column}
+.btn-secondary{
+  margin-top:10px; width:100%; background:var(--card); color:var(--blue);
+  border:1px solid var(--blue); border-radius:var(--r-md); padding:13px;
+  font-size:15px; font-weight:700; font-family:inherit; cursor:pointer;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.btn-secondary:hover{background:var(--blue-tint)}
+.btn-secondary:not(:disabled):active{scale:.96}
 .btn-google{
   display:inline-flex; align-items:center; justify-content:center; gap:10px;
-  text-decoration:none; padding:14px 16px 14px 14px;
+  text-decoration:none;
 }
 .link-quiet{
   margin-top:14px; align-self:center; background:none; border:none; padding:8px 10px;
@@ -396,41 +404,30 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .summary-input:focus{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
 .summary-meta{font-size:12px; color:var(--sub); margin:0; align-self:flex-end; font-variant-numeric:tabular-nums}
 
-/* 커스텀 드롭다운 */
-.dropdown{position:relative}
-.dropdown-trigger{
-  width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
-  padding:12px 12px 12px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--field);
-  font-size:14px; font-family:inherit; color:var(--ink); cursor:pointer; text-align:left;
-  transition:border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+/* 실습 항목 선택 리스트. 접지 않고 늘 펼쳐 두고, 항목이 많으니 리스트만 스크롤한다 */
+.item-list{
+  border-radius:var(--r-md); background:var(--field); box-shadow:var(--shadow-border);
+  padding:8px; max-height:236px; overflow-y:auto; overscroll-behavior:contain;
 }
-.dropdown-trigger:hover{border-color:var(--line-strong)}
-.dropdown-trigger[aria-expanded="true"]{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
-.dropdown-placeholder{color:var(--sub)}
-.dropdown-caret{color:var(--sub); flex-shrink:0; transition:rotate var(--dur-2) var(--ease)}
-.dropdown-trigger[aria-expanded="true"] .dropdown-caret{rotate:180deg}
-.dropdown-panel{
-  position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:40;
-  background:var(--card); border-radius:var(--r-md); padding:8px;
-  box-shadow:var(--shadow-pop); max-height:320px; overflow-y:auto;
-  transform-origin:top center;
-  opacity:0; visibility:hidden; scale:.96; pointer-events:none;
-  transition:opacity var(--dur-1) var(--ease), scale var(--dur-1) var(--ease), visibility 0s linear var(--dur-1);
+.item-list:focus-within{outline:2px solid var(--blue); outline-offset:1px}
+.item-group-label{
+  font-size:12px; font-weight:700; color:var(--sub); padding:8px 8px 4px;
+  position:sticky; top:-8px; background:var(--field);
 }
-.dropdown-panel.drop-up{top:auto; bottom:calc(100% + 6px); transform-origin:bottom center}
-.dropdown-panel.is-open{
-  opacity:1; visibility:visible; scale:1; pointer-events:auto;
-  transition:opacity var(--dur-2) var(--ease), scale var(--dur-2) var(--ease), visibility 0s linear 0s;
-}
-.dropdown-group-label{font-size:12px; font-weight:700; color:var(--sub); padding:8px 8px 4px}
-.dropdown-option{
-  width:100%; display:flex; align-items:center; gap:10px; padding:9px 8px;
+.item-group-label + .item-option{margin-top:2px}
+.item-option{
+  display:flex; align-items:center; gap:10px; padding:9px 10px;
   border-radius:var(--r-sm); font-size:14px; color:var(--ink); cursor:pointer;
-  transition:background-color var(--dur-1) var(--ease);
+  transition:background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.dropdown-option:hover{background:var(--bg)}
-.dropdown-option.is-active{background:var(--bg)}
-.dropdown-option[aria-selected="true"]{background:var(--blue-tint); color:var(--blue); font-weight:600}
+.item-option:hover{background:var(--bg)}
+.item-option:focus-visible{outline:2px solid var(--blue); outline-offset:-2px}
+.item-option.is-selected{background:var(--blue-tint); color:var(--blue); font-weight:700}
+.item-option-label{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* 고른 항목에만 체크가 뜬다. 색만으로 알리지 않는다 */
+.item-check{display:flex; color:var(--blue); opacity:0; flex-shrink:0}
+.item-option.is-selected .item-check{opacity:1}
+.item-error{font-size:13px; color:var(--red); margin:0; padding:10px}
 .track-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0}
 .track-dot.a{background:var(--blue)}
 .track-dot.b{background:var(--orange)}
@@ -481,14 +478,12 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .records-empty{font-size:14px; color:var(--sub); text-align:center; padding:32px 0; margin:0}
 .record-card{
   position:relative; overflow:hidden;
-  background:var(--card); border-radius:var(--r-lg); padding:16px 18px 16px 22px;
+  background:var(--card); border-radius:var(--r-lg); padding:16px 18px;
   display:flex; flex-direction:column; gap:10px; box-shadow:var(--shadow-border);
   transition:box-shadow var(--dur-2) var(--ease);
 }
 .record-card:hover{box-shadow:var(--shadow-border-hover)}
-/* 트랙 액센트. 보더 대신 의사 요소라 둥근 모서리에서 잘리지 않는다 */
-.record-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--blue)}
-.record-card.track-b::before{background:var(--orange)}
+/* 트랙 구분은 항목 배지 색으로만 한다. 카드 테두리로는 표시하지 않는다 */
 @keyframes record-in{
   from{opacity:0; transform:translateY(-8px); filter:blur(4px)}
   to{opacity:1; transform:translateY(0); filter:blur(0)}
@@ -517,7 +512,9 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   border-bottom:1px solid var(--line); font-size:12px; font-weight:700; color:var(--sub);
 }
 .record-md-icon{color:var(--blue); display:flex}
-.record-md-name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.record-md-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.record-md-size{font-size:11px; font-weight:600; color:var(--sub); font-variant-numeric:tabular-nums; flex-shrink:0}
+.record-md-head .doc-action{flex-shrink:0}
 .record-md-toggle{
   border:none; background:none; font-family:inherit; font-size:12px; font-weight:700;
   color:var(--blue); cursor:pointer; padding:4px 8px; border-radius:var(--r-sm);
@@ -691,11 +688,9 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   button:not(:disabled):active{scale:1}
   .record-card.is-new{animation:none}
   .panel-live:not(.hidden),.panel-records:not(.hidden),.presenter-badge:not(.hidden){animation:none}
-  .dropdown-panel,.dropdown-panel.is-open{scale:1}
   .lightbox-img,.lightbox.is-open .lightbox-img{scale:1}
   .cell-zoom-frame,.cell-zoom.is-open .cell-zoom-frame{scale:1}
   .modal-card,.modal-overlay.is-open .modal-card{scale:1; translate:0 0}
-  .dropdown-caret,.dropdown-trigger[aria-expanded="true"] .dropdown-caret{transition:none}
   .icon-swap svg{scale:1 !important; filter:none !important}
 }
 /* 투명도를 줄여달라고 하면 유리 재질을 불투명으로 바꾼다 */

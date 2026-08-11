@@ -733,8 +733,6 @@ const panelLive = document.getElementById("panelLive");
 const panelRecords = document.getElementById("panelRecords");
 const recordsBadge = document.getElementById("recordsBadge");
 const recordAuthor = document.getElementById("recordAuthor");
-const itemTrigger = document.getElementById("itemTrigger");
-const itemTriggerLabel = document.getElementById("itemTriggerLabel");
 const itemPanel = document.getElementById("itemPanel");
 const summaryInput = document.getElementById("summaryInput");
 const attachBtn = document.getElementById("attachBtn");
@@ -807,16 +805,16 @@ async function loadItems() {
   try {
     const res = await fetch("/api/items");
     const items = await res.json();
-    buildDropdown(items);
+    buildItemList(items);
   } catch (e) {
-    itemTriggerLabel.textContent = "항목을 불러오지 못했습니다";
+    itemPanel.innerHTML = '<p class="item-error">항목을 불러오지 못했습니다. 새로고침하세요.</p>';
   }
 }
 
-let optionEls = []; // 화살표 이동 대상(그룹 라벨은 제외한 실제 항목만)
-let activeIndex = -1;
+let optionEls = []; // 실제 항목만(그룹 제목 제외)
 
-function buildDropdown(items) {
+// 실습 항목을 접지 않고 늘 펼쳐 둔다. 네이티브 radio 대신 우리 마크업으로 라디오그룹을 만든다.
+function buildItemList(items) {
   const groups = { A: [], B: [] };
   items.forEach((it) => groups[it.track] && groups[it.track].push(it));
   const section = (track, title) => {
@@ -824,103 +822,58 @@ function buildDropdown(items) {
     const opts = groups[track]
       .map(
         (it) => `
-        <div class="dropdown-option" role="option" id="opt-${it.code}" aria-selected="false" data-code="${it.code}">
+        <div class="item-option" role="radio" id="opt-${it.code}" aria-checked="false" tabindex="-1" data-code="${it.code}">
           <span class="track-dot ${track.toLowerCase()}"></span>
-          <span>${escapeHtml(it.label)}</span>
+          <span class="item-option-label">${escapeHtml(it.label)}</span>
+          <span class="item-check" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+          </span>
         </div>`
       )
       .join("");
-    return `<div class="dropdown-group-label" role="presentation">${title}</div>${opts}`;
+    return `<div class="item-group-label" role="presentation">${title}</div>${opts}`;
   };
   itemPanel.innerHTML = section("A", "트랙 A 기초") + section("B", "트랙 B 심화");
 
-  optionEls = Array.from(itemPanel.querySelectorAll(".dropdown-option"));
+  optionEls = Array.from(itemPanel.querySelectorAll(".item-option"));
+  // 아무것도 안 골랐을 때 Tab 한 번으로 리스트에 들어오게 첫 항목만 초점 대상으로 둔다.
+  if (optionEls[0]) optionEls[0].tabIndex = 0;
   optionEls.forEach((opt, idx) => {
-    opt.addEventListener("click", () => selectOption(idx));
-    opt.addEventListener("pointerenter", () => setActive(idx));
+    opt.addEventListener("click", () => selectItem(idx));
+    opt.addEventListener("keydown", (e) => onItemKey(e, idx));
   });
 }
 
-function selectOption(idx) {
+function selectItem(idx, focus) {
   const opt = optionEls[idx];
   if (!opt) return;
   selectedItemCode = opt.dataset.code;
-  itemTriggerLabel.textContent = opt.querySelector("span:last-child").textContent;
-  itemTriggerLabel.classList.remove("dropdown-placeholder");
-  optionEls.forEach((o) => o.setAttribute("aria-selected", "false"));
-  opt.setAttribute("aria-selected", "true");
-  closeDropdown();
+  optionEls.forEach((o, i) => {
+    const on = i === idx;
+    o.setAttribute("aria-checked", String(on));
+    o.classList.toggle("is-selected", on);
+    o.tabIndex = on ? 0 : -1;
+  });
+  if (focus) opt.focus();
+  opt.scrollIntoView({ block: "nearest" });
 }
 
-// 포커스는 트리거에 두고 aria-activedescendant로 활성 항목만 옮긴다.
-function setActive(idx) {
-  activeIndex = idx;
-  optionEls.forEach((o, i) => o.classList.toggle("is-active", i === idx));
-  const opt = optionEls[idx];
-  if (opt) {
-    itemTrigger.setAttribute("aria-activedescendant", opt.id);
-    opt.scrollIntoView({ block: "nearest" });
-  } else {
-    itemTrigger.removeAttribute("aria-activedescendant");
-  }
-}
-
-function openDropdown() {
-  // 아래 공간이 모자라면 위로 펼친다.
-  const below = window.innerHeight - itemTrigger.getBoundingClientRect().bottom;
-  itemPanel.classList.toggle("drop-up", below < 260);
-  itemPanel.classList.add("is-open");
-  itemTrigger.setAttribute("aria-expanded", "true");
-  const selected = optionEls.findIndex((o) => o.dataset.code === selectedItemCode);
-  setActive(selected >= 0 ? selected : 0);
-}
-function closeDropdown() {
-  itemPanel.classList.remove("is-open");
-  itemTrigger.setAttribute("aria-expanded", "false");
-  itemTrigger.removeAttribute("aria-activedescendant");
-  optionEls.forEach((o) => o.classList.remove("is-active"));
-  activeIndex = -1;
-}
-function dropdownOpen() {
-  return itemPanel.classList.contains("is-open");
-}
-
-itemTrigger.addEventListener("click", (e) => {
-  e.stopPropagation();
-  dropdownOpen() ? closeDropdown() : openDropdown();
-});
-itemTrigger.addEventListener("keydown", (e) => {
-  const keys = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "];
+// 라디오그룹 관례대로 화살표로 옮기면 그 자리에서 바로 선택된다.
+function onItemKey(e, idx) {
+  const keys = ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End", " ", "Enter"];
   if (!keys.includes(e.key)) return;
-  if (!dropdownOpen()) {
-    if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      openDropdown();
-    }
-    return;
-  }
   e.preventDefault();
-  if (e.key === "ArrowDown") setActive(Math.min(activeIndex + 1, optionEls.length - 1));
-  else if (e.key === "ArrowUp") setActive(Math.max(activeIndex - 1, 0));
-  else if (e.key === "Home") setActive(0);
-  else if (e.key === "End") setActive(optionEls.length - 1);
-  else selectOption(activeIndex);
-});
-itemTrigger.addEventListener("blur", () => {
-  if (dropdownOpen()) closeDropdown();
-});
-// 항목을 눌러도 포커스는 트리거에 남긴다(누르는 순간 닫히지 않게).
-itemPanel.addEventListener("pointerdown", (e) => e.preventDefault());
-document.addEventListener("click", (e) => {
-  if (!e.target.closest("#itemDropdown")) closeDropdown();
-});
+  if (e.key === " " || e.key === "Enter") return selectItem(idx, true);
+  let next = idx;
+  if (e.key === "ArrowDown" || e.key === "ArrowRight") next = (idx + 1) % optionEls.length;
+  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") next = (idx - 1 + optionEls.length) % optionEls.length;
+  else if (e.key === "Home") next = 0;
+  else if (e.key === "End") next = optionEls.length - 1;
+  selectItem(next, true);
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (dropdownOpen()) {
-    closeDropdown();
-    itemTrigger.focus();
-    return;
-  }
   if (lightbox.classList.contains("is-open")) {
     closeLightbox();
     return;
@@ -947,25 +900,33 @@ imageInput.addEventListener("change", () => {
 const REMOVE_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
 
 // 파일 종류별 인라인 SVG. 아이콘 폰트나 외부 자산을 쓰지 않는다.
+// 20px에서도 한눈에 갈리도록 종류마다 실루엣 자체를 다르게 준다.
 const DOC_PAGE = `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>`;
 const FILE_ICONS = {
-  markdown: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M16 9v4M16 13l1.5 2 1.5-2"/>`,
-  pdf: `${DOC_PAGE}<path d="M8.5 17v-3h1a1 1 0 0 1 0 2h-1M13 17v-3h1a1.5 1.5 0 0 1 0 3z"/>`,
-  docx: `${DOC_PAGE}<path d="M8 14l1 3 1-2 1 2 1-3"/>`,
-  html: `<path d="M4 5l1.5 14L12 21l6.5-2L20 5z"/><path d="M8 9h8l-.5 5-3.5 1-3.5-1"/>`,
-  txt: `${DOC_PAGE}<path d="M8.5 13h7M8.5 16h4"/>`,
+  // 둥근 사각 안에 M 봉우리
+  markdown: `<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M6.5 15.5v-7l3 3.5 3-3.5v7M16 8.5v4.5M16 13l1.75 2.5L19.5 13"/>`,
+  // 접힌 문서 아래를 꽉 채운 띠로 덮는다
+  pdf: `${DOC_PAGE}<rect x="5" y="13.5" width="14" height="6" rx="1.5" fill="currentColor" stroke="none"/>`,
+  // 접힌 문서 안에 글줄 세 개
+  docx: `${DOC_PAGE}<path d="M8 12.5h8M8 15.5h8M8 18.5h4.5"/>`,
+  // 꺾쇠 두 개. 문서 모양을 아예 안 쓴다
+  html: `<path d="M8.5 8L4 12l4.5 4M15.5 8L20 12l-4.5 4M13.5 5.5l-3 13"/>`,
+  // 밑줄 없는 판에 T 한 글자
+  txt: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M8 9h8M12 9v6.5"/>`,
   file: DOC_PAGE,
 };
 
+// 종류마다 아이콘, 이름, 그리고 새 탭으로 열 때 붙일 라벨을 정한다.
+// open이 없으면 브라우저가 그 자리에서 못 여는 종류라 내려받기만 준다(워드가 그렇다).
 function fileShape(file) {
   const name = file.filename || file.name || "파일";
   const ext = (name.split(".").pop() || "").toLowerCase();
-  if (["md", "markdown"].includes(ext)) return { icon: "markdown", label: "마크다운" };
-  if (ext === "pdf") return { icon: "pdf", label: "PDF" };
-  if (ext === "docx") return { icon: "docx", label: "워드" };
-  if (["html", "htm"].includes(ext)) return { icon: "html", label: "HTML" };
-  if (ext === "txt") return { icon: "txt", label: "텍스트" };
-  return { icon: "file", label: "파일" };
+  if (["md", "markdown"].includes(ext)) return { icon: "markdown", label: "마크다운", open: "원문 보기" };
+  if (ext === "pdf") return { icon: "pdf", label: "PDF", open: "미리보기" };
+  if (ext === "docx") return { icon: "docx", label: "워드", open: null };
+  if (["html", "htm"].includes(ext)) return { icon: "html", label: "HTML", open: "새 탭에서 열기" };
+  if (ext === "txt") return { icon: "txt", label: "텍스트", open: "새 탭에서 열기" };
+  return { icon: "file", label: "파일", open: null };
 }
 
 function fileIconSvg(kind, size = 20) {
@@ -1061,13 +1022,13 @@ async function loadMarkdown(box) {
     body.textContent = "마크다운을 불러오지 못했습니다.";
     return;
   }
-  // 길면 접어 두고 펼치기를 준다.
+  // 길면 접어 두고 전체 보기를 준다.
   if (body.scrollHeight > 260) {
     box.classList.add("is-clipped");
     toggle.classList.remove("hidden");
     toggle.addEventListener("click", () => {
       const open = box.classList.toggle("is-open");
-      toggle.textContent = open ? "접기" : "펼치기";
+      toggle.textContent = open ? "접기" : "전체 보기";
       toggle.setAttribute("aria-expanded", String(open));
     });
   }
@@ -1196,7 +1157,9 @@ function addRecordCard(record, prepend) {
         <div class="record-md-head">
           <span class="record-md-icon">${fileIconSvg("markdown", 16)}</span>
           <span class="record-md-name">${escapeHtml(f.filename)}</span>
-          <button type="button" class="record-md-toggle hidden">펼치기</button>
+          <span class="record-md-size">${formatBytes(f.size)}</span>
+          <button type="button" class="record-md-toggle hidden" aria-expanded="false">전체 보기</button>
+          <a class="doc-action" href="${escapeHtml(f.url)}" download="${escapeHtml(f.filename)}">내려받기</a>
         </div>
         <div class="record-md-body">불러오는 중입니다.</div>
       </div>`
@@ -1207,7 +1170,6 @@ function addRecordCard(record, prepend) {
   const docs = docFiles
     .map((f) => {
       const shape = fileShape(f);
-      const openable = f.kind === "document" && f.mimeType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
       return `
       <div class="record-doc">
         <span class="record-doc-icon">${fileIconSvg(shape.icon)}</span>
@@ -1216,7 +1178,7 @@ function addRecordCard(record, prepend) {
           <span class="record-doc-meta">${shape.label} ${formatBytes(f.size)}</span>
         </span>
         <span class="record-doc-actions">
-          ${openable ? `<a class="doc-action" href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer">열기</a>` : ""}
+          ${shape.open ? `<a class="doc-action is-open" href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer">${shape.open}</a>` : ""}
           <a class="doc-action" href="${escapeHtml(f.url)}" download="${escapeHtml(f.filename)}">내려받기</a>
         </span>
       </div>`;

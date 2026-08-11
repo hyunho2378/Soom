@@ -21,11 +21,11 @@
     <!-- 강연자, 로그인 전 -->
     <div id="paneSignedOut" class="join-pane hidden">
       <p class="sub">강연자는 구글로 로그인해 방을 만듭니다. 체험자는 강연자가 알려준 코드로 들어옵니다.</p>
-      <a href="/auth/google" id="googleLoginBtn" class="btn-primary btn-join btn-google">
+      <button type="button" id="showCodeFormBtn" class="btn-primary btn-join">참여 코드로 입장하기</button>
+      <a href="/auth/google" id="googleLoginBtn" class="btn-secondary btn-google">
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 11v2.8h6.6c-.3 1.7-2 5-6.6 5a7 7 0 1 1 0-14c2 0 3.4.8 4.2 1.6l2.4-2.3A10 10 0 1 0 12 22c5.8 0 9.6-4 9.6-9.8 0-.7 0-1.2-.2-1.7H12z"/></svg>
         구글로 로그인하기
       </a>
-      <button type="button" id="showCodeFormBtn" class="link-quiet">참여 코드가 있나요? 코드로 입장하기</button>
     </div>
 
     <!-- 강연자, 로그인 후 -->
@@ -147,15 +147,7 @@
 
           <div class="form-row">
             <span class="form-label" id="itemLabel">실습 항목</span>
-            <div class="dropdown" id="itemDropdown">
-              <button type="button" class="dropdown-trigger" id="itemTrigger"
-                      role="combobox" aria-haspopup="listbox" aria-expanded="false"
-                      aria-controls="itemPanel" aria-labelledby="itemLabel itemTriggerLabel">
-                <span id="itemTriggerLabel" class="dropdown-placeholder">실습 항목 선택</span>
-                <svg class="dropdown-caret" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-              <div class="dropdown-panel" id="itemPanel" role="listbox" tabindex="-1" aria-labelledby="itemLabel"></div>
-            </div>
+            <div class="item-list" id="itemPanel" role="radiogroup" aria-labelledby="itemLabel"></div>
           </div>
 
           <div class="form-row">
