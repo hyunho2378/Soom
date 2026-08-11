@@ -1,0 +1,17 @@
+{
+  "name": "donghae-screen-share",
+  "version": "1.0.0",
+  "private": true,
+  "description": "동해 AI 교육용 실시간 화면 공유 도구",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "multer": "^2.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,479 @@
+:root{
+  /* 색 정본 */
+  --blue:#0053F0;
+  --blue-dark:#0044C9;
+  --blue-tint:#E8EFFE;
+  --blue-muted:#B9C6E8;
+  --blue-glass:rgba(0,83,240,.72);
+  --ink:#1A1A1E;
+  --sub:#6B6B72;
+  --bg:#F5F6F8;
+  --bg-grad:#EDF1FC;
+  --card:#FFFFFF;
+  --field:#FAFAFB;
+  --line:#E7E8EC;
+  --line-strong:#CFD3DB;
+  --line-dash:#C6CBD4;
+  --green:#16A34A;
+  --green-glow:rgba(22,163,74,.5);
+  --red:#D92D20;
+  --red-dark:#B42318;
+  --red-tint:#FEF2F1;
+  --red-muted:#E9A9A3;
+  --orange:#FF6B35;
+  --orange-dark:#E24E18;
+  --orange-tint:#FFEDE5;
+
+  /* 뷰어 전용(어두운 표면 위) */
+  --viewer:#12131A;
+  --viewer-ink:#9DA3B4;
+  --viewer-sub:#6B7186;
+  --viewer-chip:#20222E;
+  --viewer-accent:#5B7FE0;
+
+  /* 스크림과 유리 재질 */
+  --scrim:rgba(10,12,20,.5);
+  --scrim-strong:rgba(10,12,20,.86);
+  --glass:rgba(255,255,255,.72);
+  --glass-blur:20px;
+  --on-glass:rgba(255,255,255,.14);
+  --on-glass-hover:rgba(255,255,255,.24);
+  --on-dark:rgba(26,26,30,.72);
+
+  /* 깊이는 그림자, 구조는 보더 */
+  --shadow-border:0 0 0 1px oklch(0 0 0/.06), 0 1px 2px -1px oklch(0 0 0/.06), 0 2px 4px oklch(0 0 0/.04);
+  --shadow-border-hover:0 0 0 1px oklch(0 0 0/.08), 0 1px 2px -1px oklch(0 0 0/.08), 0 2px 4px oklch(0 0 0/.06);
+  --shadow-pop:0 0 0 1px oklch(0 0 0/.06), 0 12px 32px oklch(0 0 0/.12);
+  --shadow-card:0 0 0 1px oklch(0 0 0/.05), 0 12px 40px oklch(0 0 0/.08);
+  --shadow-modal:0 0 0 1px oklch(0 0 0/.06), 0 20px 60px oklch(0 0 0/.2);
+  --img-line:1px solid oklch(0 0 0/.1);
+
+  /* 반경 4단계 */
+  --r-sm:8px;
+  --r-md:12px;
+  --r-lg:16px;
+  --r-xl:20px;
+
+  /* 모션 */
+  --ease:cubic-bezier(.2,0,0,1);
+  --dur-1:120ms;
+  --dur-2:180ms;
+  --dur-3:260ms;
+
+  /* 아바타 팔레트. app.js가 이 값을 읽어간다 */
+  --avatar-1:#0053F0;
+  --avatar-2:#FF6B35;
+  --avatar-3:#16A34A;
+  --avatar-4:#7C3AED;
+  --avatar-5:#DB2777;
+  --avatar-6:#0891B2;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+html{-webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale}
+body{
+  margin:0; font-family:'Pretendard Variable','Pretendard',sans-serif;
+  background:var(--bg); color:var(--ink);
+}
+.hidden{display:none !important}
+p,li{text-wrap:pretty}
+h1,h2,h3{text-wrap:balance}
+img{outline:var(--img-line); outline-offset:-1px}
+
+/* 포커스 표시를 앱 전체에서 하나로 통일한다 */
+:where(button,input,textarea,[tabindex]):focus-visible{
+  outline:2px solid var(--blue); outline-offset:2px;
+}
+/* 프레스 피드백은 누르는 순간(:active)에 준다. 목록 행은 제외한다 */
+button{transition:scale var(--dur-1) var(--ease)}
+button:not(:disabled):not(.dropdown-option):active{scale:.96}
+
+/* 입장 화면 */
+.join-screen{
+  min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(180deg, var(--bg) 0%, var(--bg-grad) 100%);
+  padding:24px;
+}
+.join-card{
+  background:var(--card); border-radius:var(--r-xl); padding:40px 36px;
+  width:100%; max-width:400px; box-shadow:var(--shadow-card);
+}
+.brand-mark{font-size:13px; font-weight:700; color:var(--blue); letter-spacing:.02em; margin-bottom:6px}
+.join-card h1{font-size:26px; font-weight:800; margin:0 0 8px; letter-spacing:-0.02em}
+.sub{font-size:14px; color:var(--sub); margin:0 0 24px; line-height:1.5}
+.join-card label{display:block; font-size:13px; font-weight:600; color:var(--sub); margin:16px 0 6px}
+.join-card input{
+  width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md);
+  font-size:15px; font-family:inherit; background:var(--field); color:var(--ink);
+  transition:border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.join-card input:hover{border-color:var(--line-strong)}
+.join-card input:focus{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
+.btn-primary{
+  width:100%; background:var(--blue); color:#fff; border:none;
+  border-radius:var(--r-md); padding:14px; font-size:15px; font-weight:700; cursor:pointer;
+  font-family:inherit;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.btn-join{margin-top:26px}
+.btn-primary:hover{background:var(--blue-dark)}
+.btn-primary:disabled{background:var(--blue-muted); cursor:not-allowed}
+.hint{font-size:13px; color:var(--red); margin-top:12px; min-height:16px}
+
+/* 회의실 화면 */
+.room-screen{min-height:100vh; display:flex; flex-direction:column}
+.room-header{
+  position:sticky; top:0; z-index:30;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 24px; border-bottom:1px solid var(--line);
+  background:var(--glass); backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+}
+.room-title{display:flex; align-items:center; gap:8px}
+.room-title h1{font-weight:800; font-size:16px; margin:0; letter-spacing:-0.01em}
+.dot-live{
+  width:9px; height:9px; border-radius:50%; background:var(--sub); flex-shrink:0;
+  transition:background-color var(--dur-2) var(--ease);
+}
+.dot-live.is-live{background:var(--green); animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 var(--green-glow)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.room-actions{display:flex; align-items:center; gap:14px}
+.participant-count{font-size:13px; color:var(--sub); font-variant-numeric:tabular-nums}
+.btn-ghost{
+  background:none; border:1px solid var(--line); border-radius:var(--r-sm); padding:8px 16px;
+  font-size:13px; font-weight:600; font-family:inherit; color:var(--sub); cursor:pointer;
+  transition:border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
+             background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.btn-ghost:hover{border-color:var(--line-strong); color:var(--ink); background:var(--bg)}
+
+.room-body{
+  flex:1; display:grid; grid-template-columns:1fr 260px; gap:20px;
+  padding:24px; max-width:1400px; margin:0 auto; width:100%;
+}
+.viewer-area{display:flex; flex-direction:column; gap:16px; min-width:0}
+
+/* 탭 */
+.view-tabs{display:flex; gap:6px; background:var(--card); border-radius:var(--r-md); padding:5px; box-shadow:var(--shadow-border)}
+.view-tab{
+  flex:1; border:none; background:none; border-radius:var(--r-sm); padding:10px 14px;
+  font-size:14px; font-weight:700; color:var(--sub); cursor:pointer; font-family:inherit;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  transition:background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.view-tab:hover{color:var(--ink)}
+.view-tab.is-active{background:var(--blue-tint); color:var(--blue)}
+.tab-badge{
+  min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:var(--blue); color:#fff;
+  font-size:11px; font-weight:700; display:inline-flex; align-items:center; justify-content:center;
+  font-variant-numeric:tabular-nums;
+}
+@keyframes panel-in{from{opacity:0} to{opacity:1}}
+.panel-live:not(.hidden),.panel-records:not(.hidden){animation:panel-in var(--dur-1) var(--ease)}
+
+.viewer-frame{
+  /* 16대 9를 지키면서 세로가 짧은 노트북에서도 공유 버튼이 화면 안에 남게 폭을 묶는다 */
+  position:relative; width:min(100%, calc((100dvh - 260px) * 16 / 9)); margin-inline:auto;
+  aspect-ratio:16/9; background:var(--viewer);
+  border-radius:var(--r-lg); overflow:hidden; box-shadow:var(--shadow-border);
+}
+.viewer-frame video{width:100%; height:100%; object-fit:contain; background:var(--viewer)}
+.viewer-placeholder{
+  position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:var(--viewer-ink); text-align:center; gap:6px;
+  /* visibility는 보간하지 않는다. 나타날 때는 즉시, 사라질 때만 페이드가 끝난 뒤 넘긴다 */
+  transition:opacity var(--dur-3) var(--ease), visibility 0s linear 0s;
+}
+.viewer-placeholder.is-gone{
+  opacity:0; visibility:hidden;
+  transition:opacity var(--dur-3) var(--ease), visibility 0s linear var(--dur-3);
+}
+.placeholder-icon{
+  width:52px; height:52px; border-radius:var(--r-md); background:var(--viewer-chip); color:var(--viewer-accent);
+  display:flex; align-items:center; justify-content:center; margin-bottom:10px;
+}
+.viewer-placeholder p{margin:0; font-size:14px}
+.placeholder-sub{color:var(--viewer-sub); font-size:13px !important}
+.presenter-badge{
+  position:absolute; top:14px; left:14px; background:var(--blue-glass); color:#fff;
+  backdrop-filter:blur(12px) saturate(160%);
+  padding:6px 14px; border-radius:999px; font-size:13px; font-weight:700;
+}
+.presenter-badge:not(.hidden){animation:panel-in var(--dur-2) var(--ease)}
+
+.panel-live{display:flex; flex-direction:column; gap:16px}
+.share-controls{display:flex; align-items:center; gap:14px}
+.btn-share{width:auto; min-width:190px; padding:13px 24px; display:inline-flex; align-items:center; justify-content:center; gap:8px}
+.btn-share.active{background:var(--red)}
+.btn-share.active:hover{background:var(--red-dark)}
+/* 공유 아이콘은 두 장을 겹쳐두고 교차 페이드한다. 상태가 바뀌어도 DOM에서 빠지지 않는다 */
+.icon-swap{position:relative; display:inline-flex; width:18px; height:18px; flex-shrink:0}
+.icon-swap svg{width:18px; height:18px; transition:opacity 300ms var(--ease), scale 300ms var(--ease), filter 300ms var(--ease)}
+.icon-stop{position:absolute; inset:0}
+.btn-share .icon-stop{opacity:0; scale:.25; filter:blur(4px)}
+.btn-share.active .icon-stop{opacity:1; scale:1; filter:blur(0)}
+.btn-share.active .icon-screen{opacity:0; scale:.25; filter:blur(4px)}
+.share-status{font-size:13px; color:var(--sub); margin:0}
+
+.participant-panel{
+  background:var(--card); border-radius:var(--r-lg); padding:18px;
+  height:fit-content; box-shadow:var(--shadow-border);
+}
+.participant-panel h2{font-size:14px; font-weight:700; margin:0 0 12px; color:var(--sub)}
+.participant-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+.participant-item{
+  display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--r-md);
+  transition:background-color var(--dur-2) var(--ease);
+}
+.participant-item.is-presenting{background:var(--blue-tint)}
+.avatar{
+  width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:700; color:#fff; flex-shrink:0;
+}
+.p-name{font-size:14px; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.p-tag{font-size:11px; font-weight:700; color:var(--blue); flex-shrink:0}
+
+/* 기록물 패널 */
+.panel-records{display:flex; flex-direction:column; gap:16px}
+.records-head{display:flex; align-items:center; justify-content:space-between; gap:12px}
+.records-head h2{font-size:18px; font-weight:800; margin:0; letter-spacing:-0.01em}
+.records-count{font-size:14px; font-weight:600; color:var(--sub); margin-left:8px; font-variant-numeric:tabular-nums}
+.btn-reset{color:var(--red)}
+.btn-reset:hover{border-color:var(--red); color:var(--red); background:var(--red-tint)}
+
+.record-form{
+  background:var(--card); border-radius:var(--r-lg); padding:20px;
+  display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow-border);
+}
+.form-row{display:flex; flex-direction:column; gap:6px}
+.form-label{font-size:13px; font-weight:600; color:var(--sub)}
+.form-author{flex-direction:row; align-items:center; gap:10px}
+.author-name{font-size:14px; font-weight:700; color:var(--ink)}
+
+.summary-input{
+  width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md);
+  font-size:14px; font-family:inherit; background:var(--field); color:var(--ink); resize:vertical; line-height:1.5;
+  transition:border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.summary-input:hover{border-color:var(--line-strong)}
+.summary-input:focus{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
+.summary-meta{font-size:12px; color:var(--sub); margin:0; align-self:flex-end; font-variant-numeric:tabular-nums}
+
+/* 커스텀 드롭다운 */
+.dropdown{position:relative}
+.dropdown-trigger{
+  width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:12px 12px 12px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--field);
+  font-size:14px; font-family:inherit; color:var(--ink); cursor:pointer; text-align:left;
+  transition:border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.dropdown-trigger:hover{border-color:var(--line-strong)}
+.dropdown-trigger[aria-expanded="true"]{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
+.dropdown-placeholder{color:var(--sub)}
+.dropdown-caret{color:var(--sub); flex-shrink:0; transition:rotate var(--dur-2) var(--ease)}
+.dropdown-trigger[aria-expanded="true"] .dropdown-caret{rotate:180deg}
+.dropdown-panel{
+  position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:40;
+  background:var(--card); border-radius:var(--r-md); padding:8px;
+  box-shadow:var(--shadow-pop); max-height:320px; overflow-y:auto;
+  transform-origin:top center;
+  opacity:0; visibility:hidden; scale:.96; pointer-events:none;
+  transition:opacity var(--dur-1) var(--ease), scale var(--dur-1) var(--ease), visibility 0s linear var(--dur-1);
+}
+.dropdown-panel.drop-up{top:auto; bottom:calc(100% + 6px); transform-origin:bottom center}
+.dropdown-panel.is-open{
+  opacity:1; visibility:visible; scale:1; pointer-events:auto;
+  transition:opacity var(--dur-2) var(--ease), scale var(--dur-2) var(--ease), visibility 0s linear 0s;
+}
+.dropdown-group-label{font-size:12px; font-weight:700; color:var(--sub); padding:8px 8px 4px}
+.dropdown-option{
+  width:100%; display:flex; align-items:center; gap:10px; padding:9px 8px;
+  border-radius:var(--r-sm); font-size:14px; color:var(--ink); cursor:pointer;
+  transition:background-color var(--dur-1) var(--ease);
+}
+.dropdown-option:hover{background:var(--bg)}
+.dropdown-option.is-active{background:var(--bg)}
+.dropdown-option[aria-selected="true"]{background:var(--blue-tint); color:var(--blue); font-weight:600}
+.track-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0}
+.track-dot.a{background:var(--blue)}
+.track-dot.b{background:var(--orange)}
+
+/* 이미지 첨부 */
+.attach-area{display:flex; flex-direction:column; gap:10px}
+.btn-attach{
+  align-self:flex-start; border:1px solid var(--line-dash); background:var(--field); color:var(--sub);
+  border-radius:var(--r-md); padding:11px 16px 11px 14px; font-size:13px; font-weight:600; font-family:inherit; cursor:pointer;
+  display:inline-flex; align-items:center; gap:8px;
+  transition:border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.btn-attach:hover{border-color:var(--blue); color:var(--blue)}
+.preview-list{display:flex; flex-wrap:wrap; gap:8px}
+.preview-thumb{position:relative; width:72px; height:72px; border-radius:var(--r-md); overflow:hidden}
+.preview-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+.preview-remove{
+  position:absolute; top:2px; right:2px; width:24px; height:24px; border:none; border-radius:var(--r-sm);
+  background:var(--on-dark); color:#fff; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+/* 보이는 크기는 24px이지만 누를 수 있는 범위는 40px로 넓힌다 */
+.preview-remove::after{
+  content:""; position:absolute; top:50%; left:50%; translate:-50% -50%; width:40px; height:40px;
+}
+.preview-remove:hover{background:var(--ink)}
+
+.form-submit-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.btn-submit-record{width:auto; min-width:150px; padding:13px 24px}
+.record-status{font-size:13px; color:var(--sub); margin:0; min-height:18px}
+.record-status.error{color:var(--red)}
+.record-status.ok{color:var(--green)}
+
+/* 기록물 카드 */
+.records-list{display:flex; flex-direction:column; gap:12px}
+.records-empty{font-size:14px; color:var(--sub); text-align:center; padding:32px 0; margin:0}
+.record-card{
+  position:relative; overflow:hidden;
+  background:var(--card); border-radius:var(--r-lg); padding:16px 18px 16px 22px;
+  display:flex; flex-direction:column; gap:10px; box-shadow:var(--shadow-border);
+  transition:box-shadow var(--dur-2) var(--ease);
+}
+.record-card:hover{box-shadow:var(--shadow-border-hover)}
+/* 트랙 액센트. 보더 대신 의사 요소라 둥근 모서리에서 잘리지 않는다 */
+.record-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--blue)}
+.record-card.track-b::before{background:var(--orange)}
+@keyframes record-in{
+  from{opacity:0; transform:translateY(-8px); filter:blur(4px)}
+  to{opacity:1; transform:translateY(0); filter:blur(0)}
+}
+.record-card.is-new{animation:record-in var(--dur-3) var(--ease)}
+.record-card-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.item-badge{
+  font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px;
+  background:var(--blue-tint); color:var(--blue);
+}
+.record-card.track-b .item-badge{background:var(--orange-tint); color:var(--orange-dark)}
+.record-author{font-size:13px; font-weight:700; color:var(--ink)}
+.record-time{font-size:12px; color:var(--sub); margin-left:auto; font-variant-numeric:tabular-nums}
+.record-summary{font-size:14px; line-height:1.6; color:var(--ink); margin:0; white-space:pre-wrap; word-break:break-word}
+.record-images{display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px}
+.record-image{
+  aspect-ratio:4/3; border-radius:var(--r-md); overflow:hidden;
+  cursor:pointer; padding:0; background:var(--bg); border:none;
+}
+.record-image img{width:100%; height:100%; object-fit:cover; display:block}
+
+/* 라이트박스 */
+.lightbox{
+  position:fixed; inset:0; z-index:80; background:var(--scrim-strong);
+  display:flex; align-items:center; justify-content:center; padding:32px;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 140ms var(--ease), visibility 0s linear 140ms;
+}
+.lightbox.is-open{
+  opacity:1; visibility:visible; pointer-events:auto;
+  transition:opacity var(--dur-2) var(--ease), visibility 0s linear 0s;
+}
+.lightbox-img{
+  max-width:92vw; max-height:86vh; border-radius:var(--r-md); object-fit:contain;
+  scale:.97; transition:scale 140ms var(--ease);
+}
+.lightbox.is-open .lightbox-img{scale:1; transition-duration:var(--dur-2)}
+.lightbox-close{
+  position:absolute; top:20px; right:20px; border:none; background:var(--on-glass); color:#fff;
+  padding:11px 18px; border-radius:var(--r-md); font-size:14px; font-weight:600; font-family:inherit; cursor:pointer;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.lightbox-close:hover{background:var(--on-glass-hover)}
+.lightbox-nav{
+  position:absolute; top:50%; translate:0 -50%; width:48px; height:48px; border:none; border-radius:50%;
+  background:var(--on-glass); color:#fff; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.lightbox-nav:hover{background:var(--on-glass-hover)}
+.lightbox-prev{left:20px}
+.lightbox-next{right:20px}
+.lightbox-count{
+  position:absolute; bottom:24px; left:50%; translate:-50% 0;
+  background:var(--on-glass); color:#fff; padding:6px 14px; border-radius:999px;
+  font-size:13px; font-weight:600; font-variant-numeric:tabular-nums;
+}
+.lightbox :focus-visible{outline-color:#fff}
+
+/* 초기화 모달 */
+.modal-overlay{
+  position:fixed; inset:0; z-index:70; background:var(--scrim);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 140ms var(--ease), visibility 0s linear 140ms;
+}
+.modal-overlay.is-open{
+  opacity:1; visibility:visible; pointer-events:auto;
+  transition:opacity var(--dur-2) var(--ease), visibility 0s linear 0s;
+}
+.modal-card{
+  background:var(--card); border-radius:var(--r-xl); padding:28px; width:100%; max-width:420px;
+  box-shadow:var(--shadow-modal); display:flex; flex-direction:column; gap:12px;
+  scale:.97; translate:0 8px; transition:scale 140ms var(--ease), translate 140ms var(--ease);
+}
+.modal-overlay.is-open .modal-card{scale:1; translate:0 0; transition-duration:var(--dur-2)}
+.modal-card h3{font-size:19px; font-weight:800; margin:0; letter-spacing:-0.01em}
+.modal-desc{font-size:14px; color:var(--sub); margin:0; line-height:1.5}
+.modal-label{font-size:13px; font-weight:600; color:var(--ink); margin-top:4px}
+.modal-input{
+  width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md);
+  font-size:15px; font-family:inherit; background:var(--field); color:var(--ink);
+  transition:border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.modal-input:hover{border-color:var(--line-strong)}
+.modal-input:focus{outline:2px solid var(--blue); outline-offset:1px; background:var(--card)}
+.modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:6px}
+.btn-danger{
+  border:none; background:var(--red); color:#fff; border-radius:var(--r-md); padding:11px 20px;
+  font-size:14px; font-weight:700; font-family:inherit; cursor:pointer;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.btn-danger:hover{background:var(--red-dark)}
+.btn-danger:disabled{background:var(--red-muted); cursor:not-allowed}
+.reset-status{font-size:13px; color:var(--red); margin:4px 0 0; min-height:16px}
+
+@media (max-width:860px){
+  .room-body{grid-template-columns:1fr}
+  /* 참가자는 가로 띠로 접어서 공유 화면을 접힘 위에 남긴다 */
+  .participant-panel{order:-1; padding:12px 14px}
+  .participant-panel h2{margin-bottom:8px}
+  .participant-list{flex-direction:row; overflow-x:auto; gap:6px; padding-bottom:2px}
+  .participant-item{flex:0 0 auto; padding:6px 10px 6px 6px}
+  .p-name{max-width:96px; flex:0 1 auto}
+  .lightbox-nav{width:44px; height:44px}
+  .lightbox-prev{left:8px}
+  .lightbox-next{right:8px}
+}
+@media (max-width:420px){
+  .room-header{padding:12px 16px}
+  .room-body{padding:16px}
+  .record-form{padding:16px}
+  .form-submit-row{flex-direction:column; align-items:stretch}
+  .btn-submit-record{width:100%}
+  .btn-share{width:100%}
+  .share-controls{flex-direction:column; align-items:stretch; gap:10px}
+  .join-card{padding:32px 24px}
+  .lightbox{padding:16px}
+  .record-images{grid-template-columns:repeat(auto-fill, minmax(96px, 1fr))}
+}
+
+/* 움직임을 줄여달라고 하면 이동과 흐림만 걷어내고 색과 라벨은 그대로 둔다 */
+@media (prefers-reduced-motion: reduce){
+  .dot-live.is-live{animation:none}
+  button:not(:disabled):active{scale:1}
+  .record-card.is-new{animation:none}
+  .panel-live:not(.hidden),.panel-records:not(.hidden),.presenter-badge:not(.hidden){animation:none}
+  .dropdown-panel,.dropdown-panel.is-open{scale:1}
+  .lightbox-img,.lightbox.is-open .lightbox-img{scale:1}
+  .modal-card,.modal-overlay.is-open .modal-card{scale:1; translate:0 0}
+  .dropdown-caret,.dropdown-trigger[aria-expanded="true"] .dropdown-caret{transition:none}
+  .icon-swap svg{scale:1 !important; filter:none !important}
+}
+/* 투명도를 줄여달라고 하면 유리 재질을 불투명으로 바꾼다 */
+@media (prefers-reduced-transparency: reduce){
+  .room-header{background:var(--card); backdrop-filter:none}
+  .presenter-badge{background:var(--blue); backdrop-filter:none}
+}
