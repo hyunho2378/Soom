@@ -250,11 +250,45 @@ app.get("/api/my-room", requireSpeaker, (req, res) => {
   res.json({ code: null });
 });
 
+// 받는 파일 정본. 확장자로 후보를 찾고 mime으로 한 번 더 확인한다.
+const ALLOWED_TYPES = [
+  { mime: "image/png", ext: [".png"], kind: "image" },
+  { mime: "image/jpeg", ext: [".jpg", ".jpeg"], kind: "image" },
+  { mime: "image/webp", ext: [".webp"], kind: "image" },
+  { mime: "image/gif", ext: [".gif"], kind: "image" },
+  { mime: "text/markdown", ext: [".md", ".markdown"], kind: "markdown", text: true },
+  { mime: "application/pdf", ext: [".pdf"], kind: "document" },
+  {
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ext: [".docx"],
+    kind: "document",
+  },
+  { mime: "text/html", ext: [".html", ".htm"], kind: "document", text: true },
+  { mime: "text/plain", ext: [".txt"], kind: "document", text: true },
+];
+// 브라우저가 mime을 비워 보내거나 뭉뚱그려 보내는 경우가 있다. 확장자가 맞으면 통과시킨다.
+const GENERIC_MIMES = new Set(["", "application/octet-stream", "application/x-download"]);
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_DOC_BYTES = 15 * 1024 * 1024;
+
+function resolveType(filename, mimetype) {
+  const ext = path.extname(String(filename || "")).toLowerCase();
+  const entry = ALLOWED_TYPES.find((t) => t.ext.includes(ext));
+  if (!entry) return null;
+  const mime = String(mimetype || "").toLowerCase().split(";")[0].trim();
+  if (mime === entry.mime) return entry;
+  if (GENERIC_MIMES.has(mime)) return entry;
+  // 텍스트 계열은 브라우저가 text/plain으로 보내는 일이 잦다.
+  if (entry.text && mime === "text/plain") return entry;
+  return null;
+}
+
 // multer는 메모리로만 받는다. 디스크를 안 거치고 버퍼를 그대로 Blob에 올린다.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 10 }, // 장당 5MB, 최대 10장
-  fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith("image/")),
+  // 큰 쪽(문서 15MB)에 맞춰 두고, 이미지 5MB 제한은 종류를 안 뒤에 확인한다.
+  limits: { fileSize: MAX_DOC_BYTES, files: 10 },
+  fileFilter: (req, file, cb) => cb(null, Boolean(resolveType(decodeName(file.originalname), file.mimetype))),
 });
 
 // multer는 파일명을 latin1로 읽어준다. 한글 이름이 깨지므로 UTF-8로 되돌린다.
@@ -263,15 +297,22 @@ function decodeName(originalname) {
   return path.basename(raw).slice(0, 80) || "파일";
 }
 
-// 버퍼를 Blob에 올리고 공개 URL을 돌려준다.
+// 버퍼를 Blob에 올리고 화면에 필요한 정보까지 함께 돌려준다.
 async function putToBlob(file) {
-  const safeName = decodeName(file.originalname);
-  const result = await blobPut(safeName, file.buffer, {
+  const filename = decodeName(file.originalname);
+  const entry = resolveType(filename, file.mimetype);
+  const result = await blobPut(filename, file.buffer, {
     access: "public",
     addRandomSuffix: true,
-    contentType: file.mimetype,
+    contentType: entry.mime, // mime도 서버 정본에서 정한다
   });
-  return result.url;
+  return {
+    url: result.url,
+    filename,
+    mimeType: entry.mime,
+    size: file.size,
+    kind: entry.kind,
+  };
 }
 
 // Blob에서 파일을 지운다. 실패해도 흐름을 멈추지 않는다.
@@ -345,7 +386,7 @@ app.get("/api/items", (req, res) => {
 });
 
 // 기록물 올리기. 이미지 여러 장 포함(multipart/form-data).
-app.post("/api/records", upload.array("images", 10), async (req, res) => {
+app.post("/api/records", upload.array("files", 10), async (req, res) => {
   const room = String(req.body.room || "").trim();
   const name = String(req.body.name || "익명").trim().slice(0, 20) || "익명";
   const itemCode = String(req.body.itemCode || "").trim();
@@ -358,18 +399,26 @@ app.post("/api/records", upload.array("images", 10), async (req, res) => {
     return res.status(400).json({ error: "방 이름과 실습 항목을 확인하세요." });
   }
   if (!summary && files.length === 0) {
-    return res.status(400).json({ error: "결과 요약이나 이미지를 하나 이상 올리세요." });
+    return res.status(400).json({ error: "결과 요약이나 파일을 하나 이상 올리세요." });
   }
   if (files.length && !blobReady) {
     return res.status(503).json({ error: "파일 저장소가 아직 설정되지 않았습니다." });
   }
 
-  let images = [];
+  // 이미지는 5MB, 문서는 15MB. multer는 큰 쪽으로 열어 뒀으니 여기서 이미지만 다시 본다.
+  const tooBig = files.find(
+    (f) => resolveType(decodeName(f.originalname), f.mimetype).kind === "image" && f.size > MAX_IMAGE_BYTES
+  );
+  if (tooBig) {
+    return res.status(400).json({ error: "이미지는 한 장에 5MB까지 올릴 수 있습니다." });
+  }
+
+  let uploaded = [];
   try {
-    images = await Promise.all(files.map(putToBlob));
+    uploaded = await Promise.all(files.map(putToBlob));
   } catch (e) {
     console.error("Blob 업로드 실패:", e.message);
-    await removeFromBlob(images);
+    await removeFromBlob(uploaded.map((f) => f.url));
     return res.status(502).json({ error: "파일을 저장하지 못했습니다. 다시 시도하세요." });
   }
 
@@ -380,7 +429,7 @@ app.post("/api/records", upload.array("images", 10), async (req, res) => {
     itemLabel: item.label, // 라벨은 서버 정본에서만 만든다.
     track: item.track,
     summary,
-    images,
+    files: uploaded,
     createdAt: Date.now(),
   };
 
@@ -403,7 +452,7 @@ app.post("/api/records/reset", requireSpeaker, async (req, res) => {
   }
 
   const list = roomRecords.get(room) || [];
-  await removeFromBlob(list.flatMap((r) => r.images || []));
+  await removeFromBlob(list.flatMap((r) => (r.files || []).map((f) => f.url)));
   roomRecords.set(room, []);
   saveRecords();
 

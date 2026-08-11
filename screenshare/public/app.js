@@ -713,22 +713,162 @@ imageInput.addEventListener("change", () => {
 
 const REMOVE_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
 
+// 파일 종류별 인라인 SVG. 아이콘 폰트나 외부 자산을 쓰지 않는다.
+const DOC_PAGE = `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>`;
+const FILE_ICONS = {
+  markdown: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M16 9v4M16 13l1.5 2 1.5-2"/>`,
+  pdf: `${DOC_PAGE}<path d="M8.5 17v-3h1a1 1 0 0 1 0 2h-1M13 17v-3h1a1.5 1.5 0 0 1 0 3z"/>`,
+  docx: `${DOC_PAGE}<path d="M8 14l1 3 1-2 1 2 1-3"/>`,
+  html: `<path d="M4 5l1.5 14L12 21l6.5-2L20 5z"/><path d="M8 9h8l-.5 5-3.5 1-3.5-1"/>`,
+  txt: `${DOC_PAGE}<path d="M8.5 13h7M8.5 16h4"/>`,
+  file: DOC_PAGE,
+};
+
+function fileShape(file) {
+  const name = file.filename || file.name || "파일";
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (["md", "markdown"].includes(ext)) return { icon: "markdown", label: "마크다운" };
+  if (ext === "pdf") return { icon: "pdf", label: "PDF" };
+  if (ext === "docx") return { icon: "docx", label: "워드" };
+  if (["html", "htm"].includes(ext)) return { icon: "html", label: "HTML" };
+  if (ext === "txt") return { icon: "txt", label: "텍스트" };
+  return { icon: "file", label: "파일" };
+}
+
+function fileIconSvg(kind, size = 20) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FILE_ICONS[kind] || FILE_ICONS.file}</svg>`;
+}
+
+function formatBytes(n) {
+  if (!n && n !== 0) return "";
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function isImageFile(file) {
+  return (file.mimeType || file.type || "").startsWith("image/");
+}
+
+// ── 아주 작은 마크다운 렌더러 ──
+// 원본을 통째로 이스케이프한 뒤 서식을 입힌다. 그래서 문서 안의 HTML은 절대 실행되지 않는다.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    // 링크는 http와 https만 받는다. 따옴표는 막아 속성 탈출을 차단한다.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdown(src) {
+  // 코드블록을 기준으로 잘라 홀수 조각만 코드로 다룬다. 치환용 표식을 안 써서 본문과 부딪힐 일이 없다.
+  return String(src)
+    .split(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/)
+    .map((part, i) =>
+      i % 2 === 1
+        ? `<pre><code>${escapeHtml(part.replace(/\n$/, ""))}</code></pre>`
+        : renderMarkdownBlocks(escapeHtml(part))
+    )
+    .join("");
+}
+
+// 코드블록을 뺀 조각을 줄 단위로 훑어 제목, 목록, 인용, 문단으로 만든다.
+function renderMarkdownBlocks(text) {
+  const out = [];
+  let list = null;
+  const flush = () => {
+    if (list) out.push(`<${list.tag}>${list.items.join("")}</${list.tag}>`);
+    list = null;
+  };
+  const pushItem = (tag, html) => {
+    if (!list || list.tag !== tag) {
+      flush();
+      list = { tag, items: [] };
+    }
+    list.items.push(`<li>${html}</li>`);
+  };
+
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) { flush(); continue; }
+    let m;
+    if ((m = t.match(/^(#{1,4})\s+(.*)$/))) {
+      flush();
+      const level = m[1].length + 2;
+      out.push(`<h${level}>${mdInline(m[2])}</h${level}>`);
+    } else if ((m = t.match(/^[-*+]\s+(.*)$/))) {
+      pushItem("ul", mdInline(m[1]));
+    } else if ((m = t.match(/^\d+\.\s+(.*)$/))) {
+      pushItem("ol", mdInline(m[1]));
+    } else if (/^(-{3,}|\*{3,})$/.test(t)) {
+      flush();
+      out.push("<hr>");
+    } else if ((m = t.match(/^&gt;\s?(.*)$/))) {
+      flush();
+      out.push(`<blockquote>${mdInline(m[1])}</blockquote>`);
+    } else {
+      flush();
+      out.push(`<p>${mdInline(t)}</p>`);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
+// 마크다운 본문은 Blob에서 직접 받아 카드 안에 그린다.
+async function loadMarkdown(box) {
+  const body = box.querySelector(".record-md-body");
+  const toggle = box.querySelector(".record-md-toggle");
+  try {
+    const res = await fetch(box.dataset.url);
+    if (!res.ok) throw new Error("불러오기 실패");
+    body.innerHTML = renderMarkdown((await res.text()).slice(0, 200000));
+  } catch (e) {
+    body.textContent = "마크다운을 불러오지 못했습니다.";
+    return;
+  }
+  // 길면 접어 두고 펼치기를 준다.
+  if (body.scrollHeight > 260) {
+    box.classList.add("is-clipped");
+    toggle.classList.remove("hidden");
+    toggle.addEventListener("click", () => {
+      const open = box.classList.toggle("is-open");
+      toggle.textContent = open ? "접기" : "펼치기";
+      toggle.setAttribute("aria-expanded", String(open));
+    });
+  }
+}
+
 function renderPreviews() {
   // 이전 objectURL을 먼저 회수하고 다시 만든다.
   previewUrls.forEach((u) => URL.revokeObjectURL(u));
   previewUrls = [];
   previewList.innerHTML = "";
   selectedFiles.forEach((file, idx) => {
-    const url = URL.createObjectURL(file);
-    previewUrls.push(url);
-    const thumb = document.createElement("div");
-    thumb.className = "preview-thumb";
-    thumb.innerHTML = `<img src="${url}" alt="첨부 미리보기 ${idx + 1}번"><button type="button" class="preview-remove" aria-label="첨부 ${idx + 1}번 삭제">${REMOVE_ICON}</button>`;
-    thumb.querySelector(".preview-remove").addEventListener("click", () => {
+    const cell = document.createElement("div");
+    const remove = `<button type="button" class="preview-remove" aria-label="첨부 ${idx + 1}번 삭제">${REMOVE_ICON}</button>`;
+    if (isImageFile(file)) {
+      const url = URL.createObjectURL(file);
+      previewUrls.push(url);
+      cell.className = "preview-thumb";
+      cell.innerHTML = `<img src="${url}" alt="첨부 미리보기 ${idx + 1}번">${remove}`;
+    } else {
+      // 문서는 썸네일이 없으므로 종류 아이콘과 이름으로 보여준다.
+      const shape = fileShape(file);
+      cell.className = "preview-doc";
+      cell.innerHTML = `
+        <span class="preview-doc-icon">${fileIconSvg(shape.icon)}</span>
+        <span class="preview-doc-body">
+          <span class="preview-doc-name">${escapeHtml(file.name)}</span>
+          <span class="preview-doc-meta">${shape.label} ${formatBytes(file.size)}</span>
+        </span>${remove}`;
+    }
+    cell.querySelector(".preview-remove").addEventListener("click", () => {
       selectedFiles.splice(idx, 1);
       renderPreviews();
     });
-    previewList.appendChild(thumb);
+    previewList.appendChild(cell);
   });
 }
 
@@ -740,7 +880,7 @@ submitRecordBtn.addEventListener("click", async () => {
   }
   const summary = summaryInput.value.trim();
   if (!summary && selectedFiles.length === 0) {
-    setRecordStatus("결과 요약이나 이미지를 하나 이상 올리세요.", "error");
+    setRecordStatus("결과 요약이나 파일을 하나 이상 올리세요.", "error");
     return;
   }
 
@@ -749,7 +889,7 @@ submitRecordBtn.addEventListener("click", async () => {
   form.append("name", myName);
   form.append("itemCode", selectedItemCode);
   form.append("summary", summary);
-  selectedFiles.forEach((f) => form.append("images", f));
+  selectedFiles.forEach((f) => form.append("files", f));
 
   submitRecordBtn.disabled = true;
   submitRecordBtn.textContent = "올리는 중입니다";
@@ -803,11 +943,51 @@ function addRecordCard(record, prepend) {
   card.className = "record-card" + (record.track === "B" ? " track-b" : "");
   if (prepend) card.classList.add("is-new");
 
-  const urls = record.images || [];
-  const images = urls
+  const all = record.files || [];
+  const imageFiles = all.filter((f) => f.kind === "image");
+  const markdownFiles = all.filter((f) => f.kind === "markdown");
+  const docFiles = all.filter((f) => f.kind === "document");
+  const urls = imageFiles.map((f) => f.url);
+
+  const images = imageFiles
     .map(
-      (url, i) => `<button type="button" class="record-image" data-index="${i}"><img src="${escapeHtml(url)}" alt="${escapeHtml(record.itemLabel)} 첨부 이미지 ${i + 1}번" loading="lazy"></button>`
+      (f, i) => `<button type="button" class="record-image" data-index="${i}"><img src="${escapeHtml(f.url)}" alt="${escapeHtml(f.filename)}" loading="lazy"></button>`
     )
+    .join("");
+
+  // 마크다운은 카드 안에서 바로 읽게 한다. 원본은 이스케이프한 뒤 렌더한다.
+  const markdown = markdownFiles
+    .map(
+      (f) => `
+      <div class="record-md" data-url="${escapeHtml(f.url)}">
+        <div class="record-md-head">
+          <span class="record-md-icon">${fileIconSvg("markdown", 16)}</span>
+          <span class="record-md-name">${escapeHtml(f.filename)}</span>
+          <button type="button" class="record-md-toggle hidden">펼치기</button>
+        </div>
+        <div class="record-md-body">불러오는 중입니다.</div>
+      </div>`
+    )
+    .join("");
+
+  // HTML은 앱 안에서 렌더하지 않는다. 새 탭으로만 연다.
+  const docs = docFiles
+    .map((f) => {
+      const shape = fileShape(f);
+      const openable = f.kind === "document" && f.mimeType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      return `
+      <div class="record-doc">
+        <span class="record-doc-icon">${fileIconSvg(shape.icon)}</span>
+        <span class="record-doc-body">
+          <span class="record-doc-name">${escapeHtml(f.filename)}</span>
+          <span class="record-doc-meta">${shape.label} ${formatBytes(f.size)}</span>
+        </span>
+        <span class="record-doc-actions">
+          ${openable ? `<a class="doc-action" href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer">열기</a>` : ""}
+          <a class="doc-action" href="${escapeHtml(f.url)}" download="${escapeHtml(f.filename)}">내려받기</a>
+        </span>
+      </div>`;
+    })
     .join("");
 
   card.innerHTML = `
@@ -818,11 +998,14 @@ function addRecordCard(record, prepend) {
     </div>
     ${record.summary ? `<p class="record-summary">${escapeHtml(record.summary)}</p>` : ""}
     ${images ? `<div class="record-images">${images}</div>` : ""}
+    ${markdown}
+    ${docs ? `<div class="record-docs">${docs}</div>` : ""}
   `;
 
   card.querySelectorAll(".record-image").forEach((btn) => {
     btn.addEventListener("click", () => openLightbox(urls, Number(btn.dataset.index), btn));
   });
+  card.querySelectorAll(".record-md").forEach(loadMarkdown);
 
   if (prepend) {
     recordsList.prepend(card);
