@@ -189,7 +189,8 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .btn-ghost:hover{border-color:var(--line-strong); color:var(--ink); background:var(--bg)}
 
 .room-body{
-  flex:1; display:grid; grid-template-columns:1fr 260px; gap:20px;
+  /* 1fr은 min-width auto라 내용보다 작아지지 않는다. 좁은 화면에서 트랙이 안 줄어 가로 스크롤이 생긴다 */
+  flex:1; display:grid; grid-template-columns:minmax(0, 1fr) 260px; gap:20px;
   padding:24px; max-width:1400px; margin:0 auto; width:100%;
 }
 .viewer-area{display:flex; flex-direction:column; gap:16px; min-width:0}
@@ -215,6 +216,8 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 /* 16대 9를 지키면서 세로가 짧은 노트북에서도 공유 버튼이 화면 안에 남게 폭을 묶는다.
    프레임과 공유 컨트롤이 같은 폭을 써야 왼쪽 정렬이 어긋나지 않는다 */
 .panel-live{--viewer-w:min(100%, calc((100dvh - 260px) * 16 / 9))}
+/* 격자가 보이면 공유 컨트롤은 격자 폭을 따른다 */
+.panel-live:has(.grid-wrap:not(.hidden)) .share-controls{width:100%}
 .viewer-frame{
   position:relative; width:var(--viewer-w); margin-inline:auto;
   aspect-ratio:16/9; background:var(--viewer);
@@ -243,6 +246,96 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   padding:6px 14px; border-radius:999px; font-size:13px; font-weight:700;
 }
 .presenter-badge:not(.hidden){animation:panel-in var(--dur-2) var(--ease)}
+
+/* ── 강연자용 체험자 화면 격자 ── */
+.grid-wrap{display:flex; flex-direction:column; gap:12px; min-width:0}
+.grid-head{display:flex; align-items:center; justify-content:space-between; gap:12px}
+.grid-title{font-size:16px; font-weight:800; margin:0; letter-spacing:-0.01em}
+.grid-count{font-size:14px; font-weight:600; color:var(--sub); margin-left:6px; font-variant-numeric:tabular-nums}
+.btn-grid-full{display:inline-flex; align-items:center; gap:7px; padding:8px 14px 8px 12px}
+
+.screen-grid{
+  --gap:10px;
+  /* 격자는 빔프로젝터로 한눈에 보는 화면이다. 스크롤이 생기면 감시 기능을 잃는다.
+     그래서 남는 세로 높이에서 역산해 격자 전체 폭을 묶고, 셀은 16대 9를 그대로 지킨다. */
+  --chrome:300px;
+  --avail:calc(100dvh - var(--chrome));
+  --cell-h:calc((var(--avail) - (var(--rows) - 1) * var(--gap)) / var(--rows));
+  display:grid; gap:var(--gap); align-content:start; justify-content:center;
+  grid-template-columns:repeat(var(--cols, 1), minmax(0, 1fr));
+  width:100%;
+  max-width:calc(var(--cell-h) * 16 / 9 * var(--cols) + (var(--cols) - 1) * var(--gap));
+  margin-inline:auto;
+}
+/* 인원에 따라 열과 행을 바꾼다. 한 명이면 크게, 늘수록 촘촘하게 */
+.screen-grid[data-count="0"],
+.screen-grid[data-count="1"]{--cols:1; --rows:1}
+.screen-grid[data-count="2"]{--cols:2; --rows:1}
+.screen-grid[data-count="3"],
+.screen-grid[data-count="4"]{--cols:2; --rows:2}
+.screen-grid[data-count="5"],
+.screen-grid[data-count="6"]{--cols:3; --rows:2}
+.screen-grid[data-count="7"],
+.screen-grid[data-count="8"],
+.screen-grid[data-count="9"]{--cols:3; --rows:3}
+.screen-grid[data-count="10"]{--cols:3; --rows:4}
+
+.grid-cell{
+  position:relative; aspect-ratio:16/9; background:var(--viewer);
+  border-radius:var(--r-md); overflow:hidden; box-shadow:var(--shadow-border);
+}
+.grid-cell video{width:100%; height:100%; object-fit:contain; display:block; background:var(--viewer)}
+/* 라이브 영상 위 칩은 backdrop-filter로만 낸다. liquidGL은 여기 금지다 */
+.cell-name{
+  position:absolute; left:8px; bottom:8px; max-width:calc(100% - 60px);
+  padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; color:#fff;
+  background:var(--on-dark); backdrop-filter:blur(10px) saturate(160%);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.cell-zoom-btn{
+  position:absolute; top:8px; right:8px; width:32px; height:32px; border:none; border-radius:var(--r-sm);
+  background:var(--on-dark); backdrop-filter:blur(10px) saturate(160%); color:#fff; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; opacity:0;
+  transition:opacity var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.grid-cell:hover .cell-zoom-btn,.cell-zoom-btn:focus-visible{opacity:1}
+/* 마우스가 없는 기기에서는 hover가 없으니 늘 보여준다 */
+@media (hover:none){ .cell-zoom-btn{opacity:1} }
+.cell-waiting{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:var(--viewer-ink); font-size:13px;
+}
+.grid-cell.is-live .cell-waiting{display:none}
+.grid-empty{
+  grid-column:1 / -1; aspect-ratio:16/9; background:var(--viewer); border-radius:var(--r-md);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:var(--viewer-ink); text-align:center; gap:6px; box-shadow:var(--shadow-border);
+}
+.grid-empty p{margin:0; font-size:14px}
+
+/* 전체 화면일 때는 위아래 여백만 줄이고 같은 계산을 쓴다 */
+.grid-wrap.is-full{background:var(--bg); padding:16px; gap:10px; justify-content:center}
+.grid-wrap.is-full .screen-grid{--chrome:90px}
+
+/* 셀 크게 보기 */
+.cell-zoom{
+  position:fixed; inset:0; z-index:80; background:var(--scrim-strong);
+  display:flex; align-items:center; justify-content:center; padding:32px;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 140ms var(--ease), visibility 0s linear 140ms;
+}
+.cell-zoom.is-open{
+  opacity:1; visibility:visible; pointer-events:auto;
+  transition:opacity var(--dur-2) var(--ease), visibility 0s linear 0s;
+}
+.cell-zoom-frame{position:relative; width:min(92vw, 1600px); aspect-ratio:16/9; scale:.97; transition:scale 140ms var(--ease)}
+.cell-zoom.is-open .cell-zoom-frame{scale:1; transition-duration:var(--dur-2)}
+.cell-zoom-frame video{width:100%; height:100%; object-fit:contain; background:var(--viewer); border-radius:var(--r-md)}
+.cell-zoom-name{
+  position:absolute; left:12px; bottom:12px; padding:6px 14px; border-radius:999px;
+  font-size:13px; font-weight:700; color:#fff;
+  background:var(--on-dark); backdrop-filter:blur(10px) saturate(160%);
+}
 
 .panel-live{display:flex; flex-direction:column; gap:16px}
 .share-controls{display:flex; align-items:center; gap:14px; width:var(--viewer-w); margin-inline:auto}
@@ -275,6 +368,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 }
 .p-name{font-size:14px; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .p-tag{font-size:11px; font-weight:700; color:var(--blue); flex-shrink:0}
+.p-tag.is-role{color:var(--sub)}
 
 /* 기록물 패널 */
 .panel-records{display:flex; flex-direction:column; gap:16px}
@@ -559,7 +653,13 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .reset-status{font-size:13px; color:var(--red); margin:4px 0 0; min-height:16px}
 
 @media (max-width:860px){
-  .room-body{grid-template-columns:1fr}
+  .room-body{grid-template-columns:minmax(0, 1fr)}
+  .screen-grid[data-count]{--cols:2; --rows:3; --chrome:380px}
+  .screen-grid[data-count="0"],
+  .screen-grid[data-count="1"]{--cols:1; --rows:1}
+  .screen-grid[data-count="2"]{--rows:1}
+  .screen-grid[data-count="3"],
+  .screen-grid[data-count="4"]{--rows:2}
   /* 참가자는 가로 띠로 접어서 공유 화면을 접힘 위에 남긴다 */
   .participant-panel{order:-1; padding:12px 14px}
   .participant-panel h2{margin-bottom:8px}
@@ -572,6 +672,8 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 }
 @media (max-width:420px){
   .room-header{padding:12px 16px}
+  .screen-grid[data-count]{--cols:1; --rows:1; --chrome:0px; max-width:100%}
+  .grid-head{flex-direction:column; align-items:stretch; gap:8px}
   .room-body{padding:16px}
   .record-form{padding:16px}
   .form-submit-row{flex-direction:column; align-items:stretch}
@@ -591,6 +693,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   .panel-live:not(.hidden),.panel-records:not(.hidden),.presenter-badge:not(.hidden){animation:none}
   .dropdown-panel,.dropdown-panel.is-open{scale:1}
   .lightbox-img,.lightbox.is-open .lightbox-img{scale:1}
+  .cell-zoom-frame,.cell-zoom.is-open .cell-zoom-frame{scale:1}
   .modal-card,.modal-overlay.is-open .modal-card{scale:1; translate:0 0}
   .dropdown-caret,.dropdown-trigger[aria-expanded="true"] .dropdown-caret{transition:none}
   .icon-swap svg{scale:1 !important; filter:none !important}
@@ -599,4 +702,5 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 @media (prefers-reduced-transparency: reduce){
   .room-header{background:var(--card); backdrop-filter:none}
   .presenter-badge{background:var(--blue); backdrop-filter:none}
+  .cell-name,.cell-zoom-btn,.cell-zoom-name{background:var(--viewer); backdrop-filter:none}
 }
