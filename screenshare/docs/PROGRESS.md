@@ -112,8 +112,16 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
 - .env가 git check-ignore로 차단되는지 확인. 추적 대상 0건.
 - server.js와 db/index.js node --check 통과.
 
-### 미검증(값이 있어야 가능)
-- 실제 Neon 연결과 테이블 생성. 로컬에 Postgres가 없어 DATABASE_URL을 받아야 확인할 수 있다. 0단계 완료 판정은 이 확인 뒤로 미룬다.
+### 실제 Neon 검증 완료 (0단계 종료)
+- .env가 상위 폴더에 있어 앱이 못 읽던 것을 screenshare/.env로 옮겼다. git check-ignore 통과 확인.
+- 부팅 로그: DB 연결 성공 neondb (PostgreSQL 18.4), 스키마 적용 완료 record_files, records, rooms, users.
+- 재기동해도 같은 로그. IF NOT EXISTS 멱등성 확인.
+- 실제 구조 확인: users 6컬럼, rooms 6, records 9, record_files 8. 인덱스 3개(idx_rooms_active_code, idx_records_room, idx_record_files_record).
+  외래키 3개(record_files→records ON DELETE CASCADE, records→users, rooms→users).
+- 기존 기능 회귀 없음: GET / 200, /api/items 17개, POST /api/records ok=true(라벨은 서버 정본에서 생성), WS join 후 records-init 수신.
+- DB records 행 수 0. 기록물은 아직 JSON 경로다. 4단계에서 옮긴다.
+- pg가 sslmode=require를 verify-full로 다룬다는 경고를 부팅마다 한 줄 찍는다. Neon 인증서가 공개 신뢰 체인이라 검증에 통과하며 동작에는 영향이 없다.
+- 검증 중 로컬 테스트 기록물 파일 data/records.json을 지웠다. 검증 실행으로 쌓인 테스트 데이터뿐이었다.
 
 ## 선택 개선(미적용, 제안)
 - 영속화 강화: 무료 플랜 디스크 휘발 대응. SQLite(better-sqlite3) 또는 Render Persistent Disk 유료 옵션. 현재는 JSON 파일이라 재배포 시 소실 가능.
