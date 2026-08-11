@@ -170,9 +170,11 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 @keyframes panel-in{from{opacity:0} to{opacity:1}}
 .panel-live:not(.hidden),.panel-records:not(.hidden){animation:panel-in var(--dur-1) var(--ease)}
 
+/* 16대 9를 지키면서 세로가 짧은 노트북에서도 공유 버튼이 화면 안에 남게 폭을 묶는다.
+   프레임과 공유 컨트롤이 같은 폭을 써야 왼쪽 정렬이 어긋나지 않는다 */
+.panel-live{--viewer-w:min(100%, calc((100dvh - 260px) * 16 / 9))}
 .viewer-frame{
-  /* 16대 9를 지키면서 세로가 짧은 노트북에서도 공유 버튼이 화면 안에 남게 폭을 묶는다 */
-  position:relative; width:min(100%, calc((100dvh - 260px) * 16 / 9)); margin-inline:auto;
+  position:relative; width:var(--viewer-w); margin-inline:auto;
   aspect-ratio:16/9; background:var(--viewer);
   border-radius:var(--r-lg); overflow:hidden; box-shadow:var(--shadow-border);
 }
@@ -201,7 +203,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .presenter-badge:not(.hidden){animation:panel-in var(--dur-2) var(--ease)}
 
 .panel-live{display:flex; flex-direction:column; gap:16px}
-.share-controls{display:flex; align-items:center; gap:14px}
+.share-controls{display:flex; align-items:center; gap:14px; width:var(--viewer-w); margin-inline:auto}
 .btn-share{width:auto; min-width:190px; padding:13px 24px; display:inline-flex; align-items:center; justify-content:center; gap:8px}
 .btn-share.active{background:var(--red)}
 .btn-share.active:hover{background:var(--red-dark)}
