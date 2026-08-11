@@ -47,7 +47,7 @@ async function init() {
     await p.query(fs.readFileSync(SCHEMA_FILE, "utf-8"));
     const { rows } = await p.query(
       `SELECT table_name FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name IN ('users','records','record_files')
+       WHERE table_schema = 'public' AND table_name IN ('users','rooms','records','record_files')
        ORDER BY table_name`
     );
     console.log(`스키마 적용 완료: ${rows.map((r) => r.table_name).join(", ") || "없음"}`);

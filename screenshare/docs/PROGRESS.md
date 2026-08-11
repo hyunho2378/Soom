@@ -95,7 +95,9 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
 
 ### 완료
 - 패키지 설치: pg, passport, passport-google-oauth20, express-session, connect-pg-simple, @vercel/blob. 취약점 0건.
-- db/schema.sql: users, records, record_files와 인덱스 2개. 전부 IF NOT EXISTS라 반복 실행에 안전하다. 세션 테이블은 connect-pg-simple이 만들므로 넣지 않았다.
+- db/schema.sql: users, rooms, records, record_files와 인덱스 3개. 전부 IF NOT EXISTS라 반복 실행에 안전하다. 세션 테이블은 connect-pg-simple이 만들므로 넣지 않았다.
+  BUILD_SPEC이 코드 기반 방 모델로 갱신되면서 rooms 테이블과 record_files.kind의 markdown 값을 반영했다.
+  docs/BUILD_SPEC.md가 파일명 끝에 공백이 붙은 옛 사본과 두 벌로 남아 있어 옛 사본을 지웠다.
 - db/index.js: Pool 생성, init()에서 연결 확인 후 schema.sql을 그대로 적용하고 만들어진 테이블 이름을 로그로 찍는다.
   DATABASE_URL이 없거나 연결에 실패해도 예외를 던지지 않고 false를 돌려준다. DB가 없어도 화면 공유는 돌아야 하기 때문이다.
 - server.js: db 모듈 require와 부팅부만 바꿨다. db.init() 후 listen 하고 DB 연결 여부를 기동 로그에 남긴다.

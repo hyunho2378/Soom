@@ -11,7 +11,19 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 기록물 한 건.
+-- 방. 강연자가 만들고 4자리 코드로 체험자를 받는다.
+-- 실시간 상태는 서버 메모리에 두고, 이 표는 강연자가 새로고침했을 때 자기 코드를 되찾는 용도다.
+CREATE TABLE IF NOT EXISTS rooms (
+  id              BIGSERIAL PRIMARY KEY,
+  code            TEXT NOT NULL,
+  speaker_user_id BIGINT REFERENCES users(id),
+  active          BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_rooms_active_code ON rooms(active, code);
+
+-- 기록물 한 건. room에는 위 4자리 코드가 그대로 들어간다.
 CREATE TABLE IF NOT EXISTS records (
   id             BIGSERIAL PRIMARY KEY,
   room           TEXT NOT NULL,
@@ -33,7 +45,7 @@ CREATE TABLE IF NOT EXISTS record_files (
   filename    TEXT NOT NULL,
   mime_type   TEXT NOT NULL,
   size_bytes  BIGINT NOT NULL,
-  kind        TEXT NOT NULL,                   -- 'image' 또는 'document'
+  kind        TEXT NOT NULL,                   -- 'image', 'markdown', 'document'
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_record_files_record ON record_files(record_id);

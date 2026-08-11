@@ -47,6 +47,61 @@
 
 ---
 
+---
+
+## 방 모델 (코드 기반 입장) — 현장 사고 방지의 핵심
+
+방 이름을 사람이 자유 입력하면 오타·대소문자·표기 차이로 다른 방에 흩어진다. 그래서 방은 강연자가 만들고, 체험자는 4자리 코드로만 들어온다.
+
+### 규칙
+- 강연자(구글 로그인)만 방을 만든다. 만들면 서버가 4자리 숫자 코드를 발급한다.
+- 강연자당 활성 방은 하나. 새로 만들면 이전 방은 종료되고 코드가 폐기된다.
+- 체험자는 코드 4자리 + 이름만 입력해 입장한다. 로그인 없음.
+- 유효하지 않은 코드는 즉시 거절("그런 방이 없습니다"). 종료된 방 코드도 거절.
+- 강연자가 나가거나 방을 닫으면 그 방 체험자 전원에게 "방이 종료되었습니다"를 통지하고 연결을 정리한다.
+
+### 코드 발급
+- 4자리 숫자(0000~9999). 발급 시 현재 활성 방들의 코드와 겹치지 않을 때까지 재추첨.
+- 코드는 방 종료 시 반환되어 재사용 가능하지만, 활성 중에는 유일.
+
+### 방 상태 저장
+- 인메모리 rooms Map(code → { code, speakerUserId, speakerWsId, clients, createdAt })에 실시간 상태.
+- DB rooms 테이블에 code, speaker_user_id, active, created_at, closed_at 기록(강연자 새로고침 시 자기 방 코드 복구용).
+
+```sql
+CREATE TABLE IF NOT EXISTS rooms (
+  id              BIGSERIAL PRIMARY KEY,
+  code            TEXT NOT NULL,
+  speaker_user_id BIGINT REFERENCES users(id),
+  active          BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_rooms_active_code ON rooms(active, code);
+```
+
+- records.room, 시그널링의 room 키는 이 4자리 코드를 그대로 쓴다.
+
+### API / 라우트
+- POST /api/rooms — 강연자 전용(세션 필요). 기존 활성 방 있으면 종료 처리 후 새 코드 발급, 반환 { code }.
+- POST /api/rooms/close — 강연자 전용. 자기 방 종료.
+- GET /api/rooms/:code — 코드 유효성 확인(체험자 입장 전 검사). active면 { ok:true }, 아니면 404.
+- GET /api/my-room — 강연자 새로고침 시 자기 활성 방 코드 복구.
+
+### 첫 화면 분기 (도착 경로로 자동 결정)
+- 앱 주소로 그냥 들어온 사람(강연자 후보):
+  - "구글로 로그인" 버튼(누르면 강연자 흐름). 로그인 후 "방 만들기" → 코드 표시(크게, 빔프로젝터용).
+  - 아래에 작게 "참여 코드가 있나요? 코드로 입장" → 코드+이름 입력(체험자 탈출구).
+- 코드+이름으로 들어온 체험자: 로그인 버튼 안 보임. 코드 유효성 통과하면 그 방 입장.
+- 강연자 화면에는 코드 입력칸 안 보임. 체험자 화면에는 로그인 안 보임.
+- 강연자가 새로고침해도 GET /api/my-room으로 코드 유지.
+
+### 강연자 화면의 코드 표시
+- 방 만든 뒤 코드 4자리를 크게 보여주고, "이 코드를 체험자에게 알려주세요" 안내. (QR은 이번 범위 밖, 추후 확장 훅만.)
+- 커스텀 UI로. 네이티브 요소 금지.
+
+---
+
 ## 1. NeonDB 스키마
 
 Postgres. 마이그레이션은 `db/schema.sql` 한 파일로 만들고, 서버 부팅 시 `CREATE TABLE IF NOT EXISTS`로 멱등 적용한다.
@@ -84,7 +139,7 @@ CREATE TABLE IF NOT EXISTS record_files (
   filename      TEXT NOT NULL,
   mime_type     TEXT NOT NULL,
   size_bytes    BIGINT NOT NULL,
-  kind          TEXT NOT NULL,               -- 'image' | 'document'
+  kind          TEXT NOT NULL,               -- 'image' | 'markdown' | 'document'
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
@@ -165,9 +220,16 @@ WebSocket join 시 역할 확정:
 
 ## 5. 기록물 파일 타입 확장
 
-- 허용 타입: image/*(png jpg webp gif), application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document(docx), text/html. mime + 확장자 이중 검증.
+- 허용 타입과 카드 표시:
+  - 이미지 image/*(png jpg webp gif) → 썸네일 4:3 cover + 라이트박스(contain, 이전/다음, 장수)
+  - 마크다운 text/markdown(.md) → 카드 안에서 바로 렌더(제목·목록·코드블록), 길면 펼치기/접기. 렌더는 가벼운 마크다운 파서 사용, 원본 HTML 이스케이프 후 안전 렌더
+  - PDF application/pdf → 아이콘 + 열기(새 탭)·내려받기
+  - 워드 docx(application/vnd.openxmlformats-officedocument.wordprocessingml.document) → 아이콘 + 내려받기
+  - HTML text/html → 아이콘 + 열기(새 탭). 앱 안에서 직접 렌더하지 말 것(보안)
+  - 텍스트 text/plain(.txt) → 아이콘 + 열기
+  - mime + 확장자 이중 검증. 목록 밖 타입은 거절.
 - 장당 상한 상향(예: 이미지 5MB, 문서 15MB). 한 기록물 첨부 최대 10개.
-- kind 판정: image/* → 'image', 그 외 → 'document'.
+- kind 판정: image/* → 'image', text/markdown → 'markdown', 그 외 → 'document'.
 - 카드 렌더 분기:
   - image: 지금처럼 썸네일 격자 + 라이트박스(design 단계 결정대로 썸네일 4:3 cover, 라이트박스 contain + 이전/다음 + 장수).
   - document: 파일 종류 인라인 SVG 아이콘(PDF/DOC/HTML 구분) + 파일명 + 용량 + "열기"(새 탭)와 "내려받기" 링크. 네이티브 아이콘 폰트 금지, 우리 SVG.
@@ -183,6 +245,8 @@ WebSocket join 시 역할 확정:
   - 검증: 서버 부팅 시 DB 연결 성공 로그, 테이블 생성 확인.
 - 1단계 로그인: OAuth 라우트 + /api/me + 세션(Neon 저장). 입장 화면에 강연자/체험자 분기.
   - 검증: 구글 로그인 왕복 성공, 새로고침·재기동 후 세션 유지, 로그아웃 동작.
+- 1.5단계 방 모델: rooms 테이블 + 코드 발급/검증 API + 첫 화면 도착 경로 분기 + 강연자 코드 표시. 시그널링 room 키를 4자리 코드로 통일.
+  - 검증: 강연자가 방 만들면 코드 발급, 체험자가 코드+이름으로 정확히 그 방 입장, 틀린 코드 거절, 강연자 새로고침 시 코드 유지, 방 종료 시 체험자 통지·정리.
 - 2단계 파일 저장 교체: multer memory + Blob put + record_files 저장. 기존 이미지 업로드가 Blob으로 감.
   - 검증: 이미지 올리면 Blob URL 반환·표시, 로컬 uploads/ 미생성, 서버 재기동 후에도 이미지 보임.
 - 3단계 파일 타입 확장: PDF·docx·html 허용 + 문서 카드 분기 + SVG 아이콘.
