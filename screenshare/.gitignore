@@ -1,5 +1,5 @@
 node_modules/
 .env
 *.log
-uploads/
+# uploads/ 는 Vercel Blob으로 옮겨 더 이상 안 쓴다
 data/

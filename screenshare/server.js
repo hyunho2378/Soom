@@ -13,14 +13,19 @@ const multer = require("multer");
 const session = require("express-session");
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const { put: blobPut, del: blobDel } = require("@vercel/blob");
 const db = require("./db");
 
 // 업로드 이미지와 기록물 영속화 파일 경로. 없으면 만든다.
-const UPLOAD_DIR = path.join(__dirname, "uploads");
+// 파일은 Vercel Blob에 올린다. 로컬 디스크에는 아무것도 안 남긴다(Render 재배포에도 살아남게).
 const DATA_DIR = path.join(__dirname, "data");
 const RECORDS_FILE = path.join(DATA_DIR, "records.json");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const blobReady = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+if (!blobReady) {
+  console.warn("파일 업로드 꺼짐: BLOB_READ_WRITE_TOKEN이 비어 있습니다.");
+}
 
 // 실습 항목 정본. 라벨과 트랙은 서버가 이 목록으로만 판단한다(클라이언트 값은 코드만 신뢰).
 const PRACTICE_ITEMS = [
@@ -67,7 +72,6 @@ function saveRecords() {
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-app.use("/uploads", express.static(UPLOAD_DIR));
 
 // ── 세션과 구글 로그인 ──
 // 세션은 Neon에 저장한다. DB가 없으면 메모리 세션으로 떨어져 로컬에서만 동작한다.
@@ -246,19 +250,35 @@ app.get("/api/my-room", requireSpeaker, (req, res) => {
   res.json({ code: null });
 });
 
-// 이미지 업로드는 multer가 받아 uploads/에 저장한다.
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = (path.extname(file.originalname) || "").toLowerCase().slice(0, 10);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-  },
-});
+// multer는 메모리로만 받는다. 디스크를 안 거치고 버퍼를 그대로 Blob에 올린다.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024, files: 10 }, // 장당 5MB, 최대 10장
   fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith("image/")),
 });
+
+// multer는 파일명을 latin1로 읽어준다. 한글 이름이 깨지므로 UTF-8로 되돌린다.
+function decodeName(originalname) {
+  const raw = Buffer.from(String(originalname || ""), "latin1").toString("utf8");
+  return path.basename(raw).slice(0, 80) || "파일";
+}
+
+// 버퍼를 Blob에 올리고 공개 URL을 돌려준다.
+async function putToBlob(file) {
+  const safeName = decodeName(file.originalname);
+  const result = await blobPut(safeName, file.buffer, {
+    access: "public",
+    addRandomSuffix: true,
+    contentType: file.mimetype,
+  });
+  return result.url;
+}
+
+// Blob에서 파일을 지운다. 실패해도 흐름을 멈추지 않는다.
+async function removeFromBlob(urls) {
+  if (!blobReady || !urls.length) return;
+  await blobDel(urls).catch((e) => console.error("Blob 삭제 실패:", e.message));
+}
 
 const server = http.createServer(app);
 
@@ -325,7 +345,7 @@ app.get("/api/items", (req, res) => {
 });
 
 // 기록물 올리기. 이미지 여러 장 포함(multipart/form-data).
-app.post("/api/records", upload.array("images", 10), (req, res) => {
+app.post("/api/records", upload.array("images", 10), async (req, res) => {
   const room = String(req.body.room || "").trim();
   const name = String(req.body.name || "익명").trim().slice(0, 20) || "익명";
   const itemCode = String(req.body.itemCode || "").trim();
@@ -333,15 +353,24 @@ app.post("/api/records", upload.array("images", 10), (req, res) => {
   const item = ITEM_MAP.get(itemCode);
   const files = req.files || [];
 
-  const cleanup = () => files.forEach((f) => fs.unlink(f.path, () => {}));
-
+  // 메모리로만 받았으므로 거절할 때 지울 디스크 파일이 없다.
   if (!room || !item) {
-    cleanup();
     return res.status(400).json({ error: "방 이름과 실습 항목을 확인하세요." });
   }
   if (!summary && files.length === 0) {
-    cleanup();
     return res.status(400).json({ error: "결과 요약이나 이미지를 하나 이상 올리세요." });
+  }
+  if (files.length && !blobReady) {
+    return res.status(503).json({ error: "파일 저장소가 아직 설정되지 않았습니다." });
+  }
+
+  let images = [];
+  try {
+    images = await Promise.all(files.map(putToBlob));
+  } catch (e) {
+    console.error("Blob 업로드 실패:", e.message);
+    await removeFromBlob(images);
+    return res.status(502).json({ error: "파일을 저장하지 못했습니다. 다시 시도하세요." });
   }
 
   const record = {
@@ -351,7 +380,7 @@ app.post("/api/records", upload.array("images", 10), (req, res) => {
     itemLabel: item.label, // 라벨은 서버 정본에서만 만든다.
     track: item.track,
     summary,
-    images: files.map((f) => `/uploads/${f.filename}`),
+    images,
     createdAt: Date.now(),
   };
 
@@ -365,7 +394,7 @@ app.post("/api/records", upload.array("images", 10), (req, res) => {
 });
 
 // 강연자용 전체 초기화. 확인 문구가 정확히 일치할 때만 실행한다.
-app.post("/api/records/reset", requireSpeaker, (req, res) => {
+app.post("/api/records/reset", requireSpeaker, async (req, res) => {
   const room = String(req.body.room || "").trim();
   const confirm = String(req.body.confirm || "").trim();
   if (!room) return res.status(400).json({ error: "방 정보가 없습니다." });
@@ -374,11 +403,7 @@ app.post("/api/records/reset", requireSpeaker, (req, res) => {
   }
 
   const list = roomRecords.get(room) || [];
-  list.forEach((r) =>
-    (r.images || []).forEach((url) => {
-      fs.unlink(path.join(UPLOAD_DIR, path.basename(url)), () => {});
-    })
-  );
+  await removeFromBlob(list.flatMap((r) => r.images || []));
   roomRecords.set(room, []);
   saveRecords();
 

@@ -169,3 +169,21 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
 
 ### 남은 항목
 - 실제 구글 동의 화면 왕복은 사람이 한 번 눌러야 한다. 검증은 세션을 DB에 직접 심어 그 뒤 경로를 전부 확인했다.
+
+## BUILD_SPEC 2단계: 파일 저장을 Vercel Blob으로 (2026-08-11)
+- multer를 diskStorage에서 memoryStorage로 바꿔 버퍼를 그대로 Blob에 올린다. 로컬 디스크를 거치지 않는다.
+- putToBlob: access public, addRandomSuffix true, contentType 보존. removeFromBlob: 실패해도 흐름을 안 멈춘다.
+- /uploads 정적 서빙과 UPLOAD_DIR 제거. uploads 폴더 삭제, .gitignore 항목 정리.
+- 초기화는 파일 unlink 대신 Blob del로 지운다.
+- 업로드 중 일부만 올라간 채 실패하면 이미 올라간 것을 되돌린다.
+- BLOB_READ_WRITE_TOKEN이 없으면 파일 첨부만 503으로 막고 텍스트 기록물은 그대로 받는다.
+
+### 검증 중 찾아 고친 것
+- multer가 파일명을 latin1로 읽어 한글 이름이 이중 인코딩으로 깨졌다(결과1.png가 %C3%AA%C2%B2...).
+  decodeName으로 latin1 버퍼를 UTF-8로 되돌렸다. 3단계에서 문서 파일명을 그대로 보여줘야 해서 지금 고쳤다.
+
+### 검증(실제 Blob 상대로 11개 항목 통과)
+- 이미지 2장 업로드 성공, 반환 URL이 blob.vercel-storage.com 공개 URL.
+- 한글 파일명 보존, 받은 바이트가 올린 것과 동일, Content-Type image/png 보존.
+- 로컬 uploads 폴더 안 생김, /uploads 경로 404.
+- 이미지 아닌 파일 400 거절, 초기화 후 Blob 파일 404로 실제 삭제 확인.
