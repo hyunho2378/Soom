@@ -37,10 +37,24 @@ let viewerPc = null; // 내가 시청자일 때 발표자와의 연결 하나
 
 const joinScreen = document.getElementById("joinScreen");
 const roomScreen = document.getElementById("roomScreen");
-const roomInput = document.getElementById("roomInput");
 const nameInput = document.getElementById("nameInput");
+const codeInput = document.getElementById("codeInput");
 const joinBtn = document.getElementById("joinBtn");
 const joinHint = document.getElementById("joinHint");
+const joinLoading = document.getElementById("joinLoading");
+const paneSignedOut = document.getElementById("paneSignedOut");
+const paneSpeaker = document.getElementById("paneSpeaker");
+const paneViewer = document.getElementById("paneViewer");
+const showCodeFormBtn = document.getElementById("showCodeFormBtn");
+const meName = document.getElementById("meName");
+const createRoomBtn = document.getElementById("createRoomBtn");
+const enterRoomBtn = document.getElementById("enterRoomBtn");
+const newRoomBtn = document.getElementById("newRoomBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const roomCodeBox = document.getElementById("roomCodeBox");
+const roomCodeText = document.getElementById("roomCodeText");
+const roleChip = document.getElementById("roleChip");
+const closeRoomBtn = document.getElementById("closeRoomBtn");
 const roomNameLabel = document.getElementById("roomNameLabel");
 const participantCount = document.getElementById("participantCount");
 const participantList = document.getElementById("participantList");
@@ -71,35 +85,126 @@ function setPlaceholder(state, name) {
   }
 }
 
-joinBtn.addEventListener("click", join);
-[roomInput, nameInput].forEach((el) => {
+// ── 입장 화면: 도착 경로로 강연자와 체험자를 가른다 ──
+let myRole = "viewer";
+let myCode = "";
+
+function showPane(pane) {
+  joinLoading.classList.add("hidden");
+  [paneSignedOut, paneSpeaker, paneViewer].forEach((p) => p.classList.toggle("hidden", p !== pane));
+}
+
+async function initJoinScreen() {
+  // 코드를 달고 들어온 사람은 체험자다. 로그인 창구를 아예 보여주지 않는다.
+  const urlCode = new URLSearchParams(location.search).get("code");
+  if (urlCode) {
+    codeInput.value = urlCode.replace(/\D/g, "").slice(0, 4);
+    showPane(paneViewer);
+    nameInput.focus();
+    return;
+  }
+  try {
+    const me = await (await fetch("/api/me")).json();
+    if (me.user && me.canSpeak) {
+      meName.textContent = me.user.name;
+      myName = me.user.name;
+      showPane(paneSpeaker);
+      const mine = await (await fetch("/api/my-room")).json();
+      if (mine.code) showRoomCode(mine.code);
+      return;
+    }
+    if (me.user && !me.canSpeak) {
+      joinHint.textContent = "강연자 권한이 없는 계정입니다. 코드로 입장하세요.";
+      showPane(paneViewer);
+      return;
+    }
+    if (!me.googleReady) {
+      document.getElementById("googleLoginBtn").classList.add("hidden");
+      joinHint.textContent = "구글 로그인이 아직 설정되지 않았습니다. 코드로 입장하세요.";
+    }
+  } catch (e) {
+    joinHint.textContent = "상태를 불러오지 못했습니다. 새로고침하세요.";
+  }
+  showPane(paneSignedOut);
+}
+
+function showRoomCode(code) {
+  myCode = code;
+  roomCodeText.textContent = code;
+  roomCodeBox.classList.remove("hidden");
+  createRoomBtn.classList.add("hidden");
+  enterRoomBtn.classList.remove("hidden");
+  newRoomBtn.classList.remove("hidden");
+}
+
+showCodeFormBtn.addEventListener("click", () => {
+  showPane(paneViewer);
+  codeInput.focus();
+});
+
+codeInput.addEventListener("input", () => {
+  codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 4);
+});
+
+async function createRoom(btn) {
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "만드는 중입니다";
+  joinHint.textContent = "";
+  try {
+    const res = await fetch("/api/rooms", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "방을 만들지 못했습니다.");
+    showRoomCode(data.code);
+  } catch (e) {
+    joinHint.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+createRoomBtn.addEventListener("click", () => createRoom(createRoomBtn));
+newRoomBtn.addEventListener("click", () => createRoom(newRoomBtn));
+
+enterRoomBtn.addEventListener("click", () => join(myCode, myName, "speaker"));
+
+logoutBtn.addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST" });
+  location.href = "/";
+});
+
+joinBtn.addEventListener("click", () => {
+  const code = codeInput.value.trim();
+  const name = nameInput.value.trim();
+  if (code.length !== 4 || !name) {
+    joinHint.textContent = "참여 코드 네 자리와 이름을 모두 입력하세요.";
+    return;
+  }
+  join(code, name, "viewer");
+});
+[codeInput, nameInput].forEach((el) => {
   el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") join();
+    if (e.key === "Enter") joinBtn.click();
   });
 });
 
-function join() {
-  const room = roomInput.value.trim();
-  const name = nameInput.value.trim();
-  if (!room || !name) {
-    joinHint.textContent = "방 이름과 내 이름을 모두 입력하세요.";
-    return;
-  }
+initJoinScreen();
+
+function join(room, name, role) {
   myRoom = room;
   myName = name;
-  joinBtn.disabled = true;
-  joinBtn.textContent = "입장하는 중입니다";
+  myRole = role;
+  const btn = role === "speaker" ? enterRoomBtn : joinBtn;
+  btn.disabled = true;
+  btn.textContent = "입장하는 중입니다";
   joinHint.textContent = "";
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}`);
 
+  // 서버가 코드를 확인하고 joined를 보내줄 때까지 화면을 넘기지 않는다.
   ws.addEventListener("open", () => {
     ws.send(JSON.stringify({ type: "join", id: myId, room: myRoom, name: myName }));
-    joinScreen.classList.add("hidden");
-    roomScreen.classList.remove("hidden");
-    roomNameLabel.textContent = myRoom;
-    setupRecords(); // 기록물 UI 초기화
   });
 
   ws.addEventListener("message", (evt) => {
@@ -113,14 +218,73 @@ function join() {
   });
 
   ws.addEventListener("error", () => {
-    joinBtn.disabled = false;
-    joinBtn.textContent = "입장하기";
+    resetJoinButton();
     joinHint.textContent = "연결에 실패했습니다. 잠시 후 다시 시도하세요.";
   });
 }
 
+function resetJoinButton() {
+  joinBtn.disabled = false;
+  joinBtn.textContent = "입장하기";
+  enterRoomBtn.disabled = false;
+  enterRoomBtn.textContent = "방에 입장하기";
+}
+
+// 서버가 역할을 확정해 돌려준 다음에 회의실로 넘어간다.
+function onJoined(room, role) {
+  myRole = role;
+  joinScreen.classList.add("hidden");
+  roomScreen.classList.remove("hidden");
+  roomNameLabel.textContent = `참여 코드 ${room}`;
+  roleChip.textContent = role === "speaker" ? "강연자" : "체험자";
+  roleChip.classList.remove("hidden");
+  roleChip.classList.toggle("is-speaker", role === "speaker");
+  // 방 종료와 기록물 초기화는 강연자만 한다.
+  closeRoomBtn.classList.toggle("hidden", role !== "speaker");
+  resetRecordsBtn.classList.toggle("hidden", role !== "speaker");
+  setupRecords();
+}
+
+// 강연자가 방을 닫으면 체험자 쪽에서 뜬다. 공유를 정리하고 알린다.
+function alertRoomClosed(reason) {
+  if (isBroadcaster) stopSharing(false);
+  const modal = document.getElementById("closedModal");
+  document.getElementById("closedModalDesc").textContent = reason || "강연자가 방을 종료했습니다.";
+  modal.classList.add("is-open");
+  document.getElementById("closedModalBtn").focus();
+  if (ws) ws.close();
+}
+document.getElementById("closedModalBtn").addEventListener("click", () => {
+  location.href = "/";
+});
+
+closeRoomBtn.addEventListener("click", async () => {
+  closeRoomBtn.disabled = true;
+  try {
+    await fetch("/api/rooms/close", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: myRoom }),
+    });
+    location.href = "/";
+  } catch (e) {
+    closeRoomBtn.disabled = false;
+  }
+});
+
 function handleMessage(msg) {
   switch (msg.type) {
+    case "joined":
+      onJoined(msg.room, msg.role);
+      break;
+    case "join-rejected":
+      resetJoinButton();
+      joinHint.textContent = msg.reason || "입장하지 못했습니다.";
+      ws.close();
+      break;
+    case "room-closed":
+      alertRoomClosed(msg.reason);
+      break;
     case "participants":
       renderParticipants(msg.list, msg.broadcasterId);
       break;

@@ -120,6 +120,48 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .btn-primary:disabled{background:var(--blue-muted); cursor:not-allowed}
 .hint{font-size:13px; color:var(--red); margin-top:12px; min-height:16px}
 
+/* 입장 화면 분기 */
+.join-pane{display:flex; flex-direction:column}
+.btn-google{
+  display:inline-flex; align-items:center; justify-content:center; gap:10px;
+  text-decoration:none; padding:14px 16px 14px 14px;
+}
+.link-quiet{
+  margin-top:14px; align-self:center; background:none; border:none; padding:8px 10px;
+  font-size:13px; font-weight:600; font-family:inherit; color:var(--sub); cursor:pointer;
+  border-radius:var(--r-sm);
+  transition:color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.link-quiet:hover{color:var(--blue); background:var(--blue-tint)}
+.join-foot{display:flex; justify-content:center; gap:6px; flex-wrap:wrap}
+.me-name{font-weight:700; color:var(--ink)}
+
+/* 강연자에게 보여주는 참여 코드. 빔프로젝터로 쏘므로 크게 둔다 */
+.room-code-box{
+  margin-top:20px; padding:20px; border-radius:var(--r-lg); background:var(--blue-tint);
+  display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center;
+}
+.room-code-label{font-size:12px; font-weight:700; color:var(--blue)}
+.room-code{
+  font-size:52px; font-weight:800; color:var(--blue); letter-spacing:.14em;
+  line-height:1.1; font-variant-numeric:tabular-nums; text-indent:.14em;
+}
+.room-code-help{font-size:13px; color:var(--sub)}
+.code-input{
+  font-size:28px !important; font-weight:800; text-align:center;
+  letter-spacing:.32em; text-indent:.32em; font-variant-numeric:tabular-nums;
+}
+
+/* 회의실 헤더의 역할 표시 */
+.role-chip{
+  font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px;
+  background:var(--bg); color:var(--sub); flex-shrink:0;
+}
+.role-chip.is-speaker{background:var(--blue-tint); color:var(--blue)}
+.btn-close-room{color:var(--red)}
+.btn-close-room:hover{border-color:var(--red); color:var(--red); background:var(--red-tint)}
+.btn-modal{width:auto; margin-top:0; padding:11px 20px}
+
 /* 회의실 화면 */
 .room-screen{min-height:100vh; display:flex; flex-direction:column}
 .room-header{

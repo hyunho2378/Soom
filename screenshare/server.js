@@ -10,6 +10,9 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const session = require("express-session");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const db = require("./db");
 
 // 업로드 이미지와 기록물 영속화 파일 경로. 없으면 만든다.
@@ -66,6 +69,183 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(UPLOAD_DIR));
 
+// ── 세션과 구글 로그인 ──
+// 세션은 Neon에 저장한다. DB가 없으면 메모리 세션으로 떨어져 로컬에서만 동작한다.
+const sessionStore = db.isEnabled()
+  ? new (require("connect-pg-simple")(session))({ pool: db.getPool(), createTableIfMissing: true })
+  : undefined;
+
+const sessionMiddleware = session({
+  store: sessionStore,
+  secret: process.env.SESSION_SECRET || "개발용 임시 비밀키",
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: "lax", maxAge: 12 * 60 * 60 * 1000 },
+});
+app.use(sessionMiddleware);
+app.use(passport.initialize());
+app.use(passport.session());
+
+// 세션에는 최소 정보만 담는다. WS 업그레이드에서 DB를 다시 안 치기 위해서다.
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((user, done) => done(null, user));
+
+// ADMIN_EMAILS가 있으면 그 메일만 강연자로 인정한다. 비어 있으면 로그인한 사람이 곧 강연자다.
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+function canSpeak(user) {
+  if (!user) return false;
+  if (!ADMIN_EMAILS.length) return true;
+  return ADMIN_EMAILS.includes(String(user.email || "").toLowerCase());
+}
+
+const googleReady = Boolean(
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && db.isEnabled()
+);
+
+if (googleReady) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/auth/google/callback",
+      },
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const email = profile.emails && profile.emails[0] ? profile.emails[0].value : "";
+          const name = profile.displayName || email.split("@")[0] || "강연자";
+          const { rows } = await db.query(
+            `INSERT INTO users (google_id, email, name)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (google_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
+             RETURNING id, email, name`,
+            [profile.id, email, name]
+          );
+          done(null, rows[0]);
+        } catch (e) {
+          done(e);
+        }
+      }
+    )
+  );
+} else {
+  console.warn("구글 로그인 꺼짐: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, DATABASE_URL을 모두 채워야 켜집니다.");
+}
+
+app.get("/auth/google", (req, res, next) => {
+  if (!googleReady) return res.status(503).send("구글 로그인이 아직 설정되지 않았습니다.");
+  passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
+});
+
+app.get(
+  "/auth/google/callback",
+  (req, res, next) => {
+    if (!googleReady) return res.redirect("/");
+    passport.authenticate("google", { failureRedirect: "/?login=failed" })(req, res, next);
+  },
+  (req, res) => res.redirect("/")
+);
+
+app.post("/auth/logout", (req, res) => {
+  const done = () => req.session.destroy(() => res.json({ ok: true }));
+  req.logout ? req.logout(done) : done();
+});
+
+// 클라가 입장 화면에서 로그인 상태를 판단하는 창구.
+app.get("/api/me", (req, res) => {
+  const user = req.user || null;
+  res.json({
+    user: user ? { id: user.id, name: user.name, email: user.email } : null,
+    canSpeak: canSpeak(user),
+    googleReady,
+  });
+});
+
+// ── 방(코드 기반 입장) ──
+// 실시간 상태는 아래 rooms Map에 두고, DB rooms 표는 강연자 새로고침 시 코드 복구용이다.
+
+function requireSpeaker(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "강연자로 로그인해야 합니다." });
+  if (!canSpeak(req.user)) return res.status(403).json({ error: "강연자 권한이 없는 계정입니다." });
+  next();
+}
+
+// 활성 방과 겹치지 않는 4자리 코드를 뽑는다.
+function newRoomCode() {
+  for (let i = 0; i < 200; i++) {
+    const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    if (!rooms.has(code)) return code;
+  }
+  throw new Error("빈 방 코드를 찾지 못했습니다.");
+}
+
+// 방을 닫는다. 안에 있던 체험자에게 알리고 연결 상태를 정리한다.
+async function closeRoom(code, reason) {
+  const room = rooms.get(code);
+  if (room) {
+    for (const [, c] of room.clients) {
+      send(c.ws, { type: "room-closed", reason: reason || "방이 종료되었습니다." });
+    }
+    rooms.delete(code);
+  }
+  if (db.isEnabled()) {
+    await db
+      .query("UPDATE rooms SET active = false, closed_at = now() WHERE code = $1 AND active = true", [code])
+      .catch((e) => console.error("방 종료 기록 실패:", e.message));
+  }
+}
+
+app.post("/api/rooms", requireSpeaker, async (req, res) => {
+  try {
+    // 강연자당 활성 방은 하나다. 새로 만들면 이전 방은 종료된다.
+    if (db.isEnabled()) {
+      const { rows } = await db.query(
+        "SELECT code FROM rooms WHERE speaker_user_id = $1 AND active = true",
+        [req.user.id]
+      );
+      for (const r of rows) await closeRoom(r.code, "강연자가 새 방을 열었습니다.");
+    }
+    const code = newRoomCode();
+    rooms.set(code, { clients: new Map(), broadcasterId: null, speakerUserId: req.user.id });
+    if (db.isEnabled()) {
+      await db.query("INSERT INTO rooms (code, speaker_user_id) VALUES ($1, $2)", [code, req.user.id]);
+    }
+    res.json({ code });
+  } catch (e) {
+    console.error("방 만들기 실패:", e.message);
+    res.status(500).json({ error: "방을 만들지 못했습니다." });
+  }
+});
+
+app.post("/api/rooms/close", requireSpeaker, async (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const room = rooms.get(code);
+  if (room && room.speakerUserId !== req.user.id) {
+    return res.status(403).json({ error: "이 방의 강연자가 아닙니다." });
+  }
+  await closeRoom(code, "강연자가 방을 종료했습니다.");
+  res.json({ ok: true });
+});
+
+// 체험자가 코드를 넣었을 때 입장 전에 확인한다.
+app.get("/api/rooms/:code", (req, res) => {
+  const code = String(req.params.code || "").trim();
+  if (!rooms.has(code)) return res.status(404).json({ error: "그런 방이 없습니다." });
+  res.json({ ok: true, code });
+});
+
+// 강연자가 새로고침해도 자기 방 코드를 되찾는다.
+app.get("/api/my-room", requireSpeaker, (req, res) => {
+  for (const [code, room] of rooms) {
+    if (room.speakerUserId === req.user.id) return res.json({ code });
+  }
+  res.json({ code: null });
+});
+
 // 이미지 업로드는 multer가 받아 uploads/에 저장한다.
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -81,17 +261,21 @@ const upload = multer({
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
 
-// roomId -> { clients: Map(clientId -> {ws, name}), broadcasterId: string|null }
+// 업그레이드에서 세션을 읽어야 역할을 서버가 재검증할 수 있다. 그래서 noServer로 붙인다.
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  sessionMiddleware(req, {}, () => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const sessionUser = req.session && req.session.passport ? req.session.passport.user : null;
+      wss.emit("connection", ws, req, sessionUser);
+    });
+  });
+});
+
+// code -> { clients: Map(clientId -> {ws, name, role}), broadcasterId, speakerUserId }
+// 방은 POST /api/rooms 로만 생긴다. 없는 코드는 입장이 거절된다.
 const rooms = new Map();
-
-function getRoom(roomId) {
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, { clients: new Map(), broadcasterId: null });
-  }
-  return rooms.get(roomId);
-}
 
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) {
@@ -112,6 +296,7 @@ function broadcastParticipants(roomId) {
   const list = Array.from(room.clients.entries()).map(([id, c]) => ({
     id,
     name: c.name,
+    role: c.role || "viewer",
   }));
   for (const [, c] of room.clients) {
     send(c.ws, { type: "participants", list, broadcasterId: room.broadcasterId });
@@ -179,8 +364,8 @@ app.post("/api/records", upload.array("images", 10), (req, res) => {
   res.json({ ok: true, record });
 });
 
-// 진행자용 전체 초기화. 확인 문구가 정확히 일치할 때만 실행한다.
-app.post("/api/records/reset", (req, res) => {
+// 강연자용 전체 초기화. 확인 문구가 정확히 일치할 때만 실행한다.
+app.post("/api/records/reset", requireSpeaker, (req, res) => {
   const room = String(req.body.room || "").trim();
   const confirm = String(req.body.confirm || "").trim();
   if (!room) return res.status(400).json({ error: "방 정보가 없습니다." });
@@ -201,7 +386,7 @@ app.post("/api/records/reset", (req, res) => {
   res.json({ ok: true });
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req, sessionUser) => {
   let currentRoomId = null;
   let clientId = null;
 
@@ -214,13 +399,24 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.type === "join") {
-      currentRoomId = String(msg.room || "기본방").trim() || "기본방";
+      const code = String(msg.room || "").trim();
       clientId = String(msg.id || "").trim();
       const name = String(msg.name || "익명").trim().slice(0, 20) || "익명";
       if (!clientId) return;
 
-      const room = getRoom(currentRoomId);
-      room.clients.set(clientId, { ws, name });
+      // 없는 코드는 즉시 거절한다. 방은 강연자가 만들 때만 생긴다.
+      const room = rooms.get(code);
+      if (!room) {
+        send(ws, { type: "join-rejected", reason: "그런 방이 없습니다. 코드를 다시 확인하세요." });
+        return;
+      }
+
+      // 클라가 role을 실어 보내도 믿지 않는다. 세션으로 다시 판정한다.
+      const isSpeaker = Boolean(sessionUser) && canSpeak(sessionUser) && room.speakerUserId === sessionUser.id;
+      currentRoomId = code;
+      room.clients.set(clientId, { ws, name, role: isSpeaker ? "speaker" : "viewer" });
+      if (isSpeaker) room.speakerWsId = clientId;
+      send(ws, { type: "joined", room: code, role: isSpeaker ? "speaker" : "viewer" });
       broadcastParticipants(currentRoomId);
 
       // 이 방의 기존 기록물을 새로 들어온 사람에게 보낸다.
@@ -283,19 +479,33 @@ wss.on("connection", (ws) => {
     if (room.broadcasterId === clientId) {
       stopBroadcast(currentRoomId, false);
     }
-    if (room.clients.size === 0) {
-      rooms.delete(currentRoomId);
-    } else {
-      broadcastParticipants(currentRoomId);
-    }
+    if (room.speakerWsId === clientId) room.speakerWsId = null;
+    // 방은 비어도 지우지 않는다. 강연자가 새로고침해도 코드가 살아 있어야 한다.
+    // 방을 없애는 길은 POST /api/rooms/close 와 강연자가 새 방을 여는 경우뿐이다.
+    broadcastParticipants(currentRoomId);
   });
 });
 
 const PORT = process.env.PORT || 3000;
 
+// connect-pg-simple은 세션 표를 첫 세션 저장 때 만든다. 그러면 실패가 하필 첫 로그인 순간에 드러난다.
+// 부팅 때 한 번 건드려 미리 만들고, 실패하면 여기서 로그로 잡는다.
+function warmSessionStore() {
+  if (!sessionStore) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    sessionStore.get("부팅확인", (err) => {
+      if (err) console.error("세션 표 준비 실패:", err.message);
+      resolve(!err);
+    });
+  });
+}
+
 // DB 연결과 스키마 적용을 끝낸 뒤 듣기 시작한다. DB가 없어도 서버는 뜬다.
-db.init().then((ok) => {
+db.init().then(async (ok) => {
+  const sess = await warmSessionStore();
   server.listen(PORT, () => {
-    console.log(`서버 실행 중: http://localhost:${PORT} (DB ${ok ? "연결됨" : "미연결"})`);
+    console.log(
+      `서버 실행 중: http://localhost:${PORT} (DB ${ok ? "연결됨" : "미연결"}, 세션 ${sess ? "DB 저장" : "메모리"})`
+    );
   });
 });

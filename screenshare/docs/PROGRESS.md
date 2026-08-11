@@ -130,3 +130,42 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
 
 ## 수정 이력
 - app.js renderAllRecords: reverse 누락으로 입장 시(records-init) 오래된 순, 실시간(record-added) 최신 순이라 정렬이 섞이던 버그 수정. list.slice().reverse()로 두 경로 모두 최신 위 통일.
+
+## BUILD_SPEC 1+1.5단계: 구글 로그인과 코드 기반 방 (2026-08-11)
+1단계와 1.5단계를 묶어서 했다. 입장 화면을 두 번 만들 이유가 없어서다.
+
+### 서버
+- express-session + connect-pg-simple로 세션을 Neon에 저장. passport-google-oauth20으로 로그인.
+  serializeUser에 최소 유저 객체를 통째로 담아 WS 업그레이드에서 DB를 다시 안 친다.
+- 라우트: GET /auth/google, GET /auth/google/callback, POST /auth/logout, GET /api/me.
+  users는 google_id 기준 upsert.
+- 방 모델: POST /api/rooms(강연자 전용, 이전 방 자동 종료 후 4자리 코드 발급), POST /api/rooms/close,
+  GET /api/rooms/:code(체험자 입장 전 확인), GET /api/my-room(강연자 새로고침 복구).
+- WS를 noServer로 바꾸고 upgrade에서 세션을 읽는다. 클라가 role=speaker를 실어 보내도 세션으로 재판정해 강등한다.
+- getRoom 자동 생성을 없앴다. 없는 코드로 join하면 join-rejected를 보낸다.
+- POST /api/records/reset에 requireSpeaker를 걸었다. 역할표대로 초기화는 강연자 권한이다.
+- ADMIN_EMAILS 훅: 비어 있으면 로그인한 사람이 곧 강연자, 값이 있으면 그 메일만 강연자.
+
+### 클라이언트
+- 입장 화면을 도착 경로로 가른다. 코드를 달고 온 사람(?code=)은 체험자로 보고 로그인 창구를 아예 숨긴다.
+  로그인한 사람은 강연자 화면(코드 입력칸 없음), 안 한 사람은 로그인 화면(작게 코드 입장 탈출구).
+- 강연자 코드 표시는 52px 크기다. 빔프로젝터로 쏘는 용도라서다.
+- 서버가 joined를 줄 때까지 회의실로 안 넘어간다. 코드가 틀리면 입장 화면에 남아 사유를 보여준다.
+- 회의실 헤더에 역할 칩과 방 종료 버튼. 체험자에게는 방 종료와 기록물 초기화가 안 보인다.
+- 방 종료 알림은 네이티브 alert 대신 기존 모달 패턴을 재사용했다.
+
+### 판단한 것
+- 강연자가 WS 연결을 끊어도 방을 지우지 않는다. 새로고침해도 코드가 살아 있어야 한다는 요구가 우선이라,
+  방을 없애는 길은 POST /api/rooms/close와 강연자가 새 방을 여는 경우뿐이다.
+- connect-pg-simple은 세션 표를 첫 세션 저장 때 늦게 만든다. 실패가 하필 첫 로그인 순간에 드러나므로
+  부팅 때 store를 한 번 건드려 미리 만들고 결과를 기동 로그에 남긴다.
+
+### 검증
+- API 20개 항목 통과. 로그인 전 401/404 거절, /auth/google가 구글로 302(리디렉션 URI가 .env와 일치),
+  방 생성과 DB 기록, 코드 확인, my-room 복구, speaker/viewer 역할 판정, role 참칭 강등,
+  없는 코드 거절, 강연자 끊겨도 코드 유지, 방 종료 통지와 DB 기록, 초기화 401, 로그아웃.
+- 화면 12개 항목 통과. 도착 경로 분기 세 갈래, 코드 52px 표시, 새로고침 코드 유지,
+  강연자와 체험자의 버튼 노출 차이, 틀린 코드 거절, 코드 링크 입장, 방 종료 모달, 콘솔 오류 0건.
+
+### 남은 항목
+- 실제 구글 동의 화면 왕복은 사람이 한 번 눌러야 한다. 검증은 세션을 DB에 직접 심어 그 뒤 경로를 전부 확인했다.

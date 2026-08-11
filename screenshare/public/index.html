@@ -10,17 +10,52 @@
 </head>
 <body>
 
-<!-- 입장 화면 -->
+<!-- 입장 화면. 도착 경로에 따라 강연자 흐름과 체험자 흐름이 갈린다 -->
 <section id="joinScreen" class="join-screen">
   <div class="join-card">
     <div class="brand-mark">동해 AI 교육</div>
     <h1>화면 공유</h1>
-    <p class="sub">같은 방 이름을 입력하면 서로의 화면을 실시간으로 봅니다.</p>
-    <label for="roomInput">방 이름</label>
-    <input id="roomInput" type="text" placeholder="예: 동해AI교육0811" maxlength="30" autocomplete="off" autofocus>
-    <label for="nameInput">내 이름</label>
-    <input id="nameInput" type="text" placeholder="예: 김현호" maxlength="20" autocomplete="off">
-    <button id="joinBtn" class="btn-primary btn-join">입장하기</button>
+
+    <p class="sub" id="joinLoading">불러오는 중입니다.</p>
+
+    <!-- 강연자, 로그인 전 -->
+    <div id="paneSignedOut" class="join-pane hidden">
+      <p class="sub">강연자는 구글로 로그인해 방을 만듭니다. 체험자는 강연자가 알려준 코드로 들어옵니다.</p>
+      <a href="/auth/google" id="googleLoginBtn" class="btn-primary btn-join btn-google">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 11v2.8h6.6c-.3 1.7-2 5-6.6 5a7 7 0 1 1 0-14c2 0 3.4.8 4.2 1.6l2.4-2.3A10 10 0 1 0 12 22c5.8 0 9.6-4 9.6-9.8 0-.7 0-1.2-.2-1.7H12z"/></svg>
+        구글로 로그인하기
+      </a>
+      <button type="button" id="showCodeFormBtn" class="link-quiet">참여 코드가 있나요? 코드로 입장하기</button>
+    </div>
+
+    <!-- 강연자, 로그인 후 -->
+    <div id="paneSpeaker" class="join-pane hidden">
+      <p class="sub"><span id="meName" class="me-name"></span> 님으로 강연자 입장합니다.</p>
+
+      <div id="roomCodeBox" class="room-code-box hidden">
+        <span class="room-code-label">참여 코드</span>
+        <strong class="room-code" id="roomCodeText"></strong>
+        <span class="room-code-help">이 코드를 체험자에게 알려주세요.</span>
+      </div>
+
+      <button type="button" id="createRoomBtn" class="btn-primary btn-join">방 만들기</button>
+      <button type="button" id="enterRoomBtn" class="btn-primary btn-join hidden">방에 입장하기</button>
+      <div class="join-foot">
+        <button type="button" id="newRoomBtn" class="link-quiet hidden">코드 새로 받기</button>
+        <button type="button" id="logoutBtn" class="link-quiet">로그아웃</button>
+      </div>
+    </div>
+
+    <!-- 체험자 -->
+    <div id="paneViewer" class="join-pane hidden">
+      <p class="sub">강연자가 알려준 참여 코드 네 자리와 이름을 넣으세요.</p>
+      <label for="codeInput">참여 코드</label>
+      <input id="codeInput" class="code-input" type="text" inputmode="numeric" placeholder="0000" maxlength="4" autocomplete="off">
+      <label for="nameInput">내 이름</label>
+      <input id="nameInput" type="text" placeholder="예: 김현호" maxlength="20" autocomplete="off">
+      <button type="button" id="joinBtn" class="btn-primary btn-join">입장하기</button>
+    </div>
+
     <p class="hint" id="joinHint" role="status"></p>
   </div>
 </section>
@@ -31,9 +66,11 @@
     <div class="room-title">
       <span class="dot-live" id="dotLive" aria-hidden="true"></span>
       <h1 id="roomNameLabel"></h1>
+      <span class="role-chip hidden" id="roleChip"></span>
     </div>
     <div class="room-actions">
       <span id="participantCount" class="participant-count"></span>
+      <button id="closeRoomBtn" class="btn-ghost btn-close-room hidden">방 종료하기</button>
       <button id="leaveBtn" class="btn-ghost">나가기</button>
     </div>
   </header>
@@ -146,6 +183,17 @@
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
   </button>
   <p class="lightbox-count" id="lightboxCount"></p>
+</div>
+
+<!-- 방 종료 알림. 네이티브 alert 대신 우리 모달을 쓴다 -->
+<div id="closedModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="closedModalTitle">
+  <div class="modal-card">
+    <h3 id="closedModalTitle">방이 종료되었습니다</h3>
+    <p class="modal-desc" id="closedModalDesc"></p>
+    <div class="modal-actions">
+      <button id="closedModalBtn" class="btn-primary btn-modal">처음 화면으로 가기</button>
+    </div>
+  </div>
 </div>
 
 <!-- 초기화 확인 모달 -->
