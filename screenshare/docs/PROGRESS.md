@@ -243,3 +243,40 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
 
 ### 정리
 - 검증으로 만든 DB 행과 Blob 파일을 전부 지웠다. users 0, rooms 0, records 0, record_files 0, Blob 0개.
+
+## BUILD_SPEC 5단계: 화면 공유 N대 1 격자 개편 (2026-08-11)
+착수 전 backup/before-grid-p2p 브랜치를 남기고 feat/grid-n-to-1 에서 작업했다.
+
+### 방향이 둘이 됐다
+- publish: 체험자 여러 명이 강연자 한 명에게 보낸다. 보내는 쪽이 offer를 만든다.
+- demo: 강연자가 체험자 전원에게 시범을 보인다. 기존 1대N 경로를 그대로 쓴다.
+- 같은 상대와 두 방향 연결이 동시에 살 수 있어서 모든 시그널에 channel(publish 또는 demo)을 붙여 구분한다.
+  서버 중계는 원래 메시지를 그대로 흘려보내므로 channel이 저절로 따라간다.
+
+### 서버
+- 방 상태에 speakerWsId와 publishers Set을 넣었다. MAX_PUBLISHERS는 10.
+- start-publish: 강연자가 방에 있어야 수락하고 speakerId를 알려준다. 상한을 넘으면 이유와 함께 거절한다.
+- stop-publish와 연결 끊김에서 removePublisher로 정리하고 강연자에게 publisher-stopped를 보낸다.
+- 강연자가 나가면 보내던 체험자 전원에게 publish-ended를 보내 멈춘다.
+- participants에 publishers 목록을 실어 누가 공유 중인지 모두가 안다.
+
+### 클라이언트
+- 역할로 화면이 갈린다. 강연자는 격자, 체험자는 시범 화면 프레임 하나.
+- 강연자는 incoming Map으로 체험자별 수신 연결을, demoPcs Map으로 시범 송출 연결을 따로 관리한다.
+- 성능 가드: 캡처를 frameRate max 8, 1280x720 상한으로 낮추고 contentHint를 detail로 준다.
+  격자에서는 작게 보이므로 충분하고 문서와 코드 화면 선명도를 우선한다.
+- 격자 셀은 지우고 다시 만들지 않는다. video 엘리먼트를 새로 만들면 재생이 끊긴다.
+- 셀 수에 따라 열이 바뀐다. 1명 1열, 2~4명 2열, 5~10명 3열. 860 이하 2열, 420 이하 1열.
+- 셀 크게 보기와 격자 전체 화면(빔프로젝터용)을 넣었다. 라이브 영상 위 칩은 backdrop-filter로만 낸다.
+
+### 검증
+- 시그널링 15개 항목 통과. 수락과 speakerId 전달, publisher-started 이름, participants publishers,
+  offer answer가 channel과 from을 달고 전달, 시범 공유 기존 경로 유지,
+  동시 10명 상한과 초과 거절 사유, 멈추면 자리 반환, 끊기면 정리, 강연자 이탈 시 전원 중단, 강연자 없으면 거절.
+- 실제 미디어 12개 항목 통과(헤드리스 크롬 4대). 체험자 3명 화면이 격자 3셀로 실제 재생(playing 3),
+  셀 3개에서 2열 배치, 셀 이름 표시, 크게 보기 contain 재생, 강연자 시범이 체험자에게 재생,
+  시범 중에도 수신 유지, 한 명 나가면 셀 정리, getStats로 바이트 440KB와 디코드 프레임 124 확인, 콘솔 예외 0건.
+
+### 남은 항목
+- 격자 셀이 커서 3명부터 접힘 아래로 넘어간다. 6단계에서 뷰포트에 맞춰 묶는다.
+- 실인원 리허설은 사람이 해야 한다. 헤드리스는 같은 기계 안이라 네트워크 조건이 실제와 다르다.

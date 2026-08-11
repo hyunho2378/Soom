@@ -87,6 +87,27 @@
 
       <!-- 실시간 화면 패널 -->
       <div id="panelLive" class="panel-live" role="tabpanel" aria-labelledby="tabLive">
+        <!-- 강연자가 체험자 화면을 격자로 받는 자리 -->
+        <div id="gridWrap" class="grid-wrap hidden">
+          <div class="grid-head">
+            <h2 class="grid-title">체험자 화면<span id="gridCount" class="grid-count"></span></h2>
+            <button type="button" id="gridFullBtn" class="btn-ghost btn-grid-full">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+              <span id="gridFullLabel">전체 화면으로 보기</span>
+            </button>
+          </div>
+          <div id="screenGrid" class="screen-grid" data-count="0">
+            <div class="grid-empty" id="gridEmpty">
+              <div class="placeholder-icon" aria-hidden="true">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              </div>
+              <p>아직 화면을 보내는 체험자가 없습니다.</p>
+              <p class="placeholder-sub">체험자가 내 화면 공유하기를 누르면 여기에 뜹니다.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 체험자가 강연자 시범 화면을 보는 자리 -->
         <div class="viewer-frame" id="viewerFrame">
           <video id="remoteVideo" autoplay playsinline></video>
           <div class="viewer-placeholder" id="viewerPlaceholder">
@@ -98,6 +119,7 @@
           </div>
           <div class="presenter-badge hidden" id="presenterBadge"></div>
         </div>
+
         <div class="share-controls">
           <button id="shareBtn" class="btn-primary btn-share">
             <span class="icon-swap" aria-hidden="true">
@@ -172,6 +194,15 @@
     </aside>
   </div>
 </section>
+
+<!-- 격자 셀 크게 보기 -->
+<div id="cellZoom" class="cell-zoom" role="dialog" aria-modal="true" aria-label="체험자 화면 크게 보기">
+  <button class="lightbox-close" id="cellZoomClose">닫기</button>
+  <div class="cell-zoom-frame">
+    <video id="cellZoomVideo" autoplay playsinline muted></video>
+    <span class="cell-zoom-name" id="cellZoomName"></span>
+  </div>
+</div>
 
 <!-- 이미지 확대 라이트박스 -->
 <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="첨부 이미지 확대">

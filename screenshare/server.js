@@ -276,7 +276,7 @@ app.post("/api/rooms", requireSpeaker, async (req, res) => {
       for (const r of rows) await closeRoom(r.code, "강연자가 새 방을 열었습니다.");
     }
     const code = newRoomCode();
-    rooms.set(code, { clients: new Map(), broadcasterId: null, speakerUserId: req.user.id });
+    rooms.set(code, { clients: new Map(), broadcasterId: null, speakerUserId: req.user.id, speakerWsId: null, publishers: new Set() });
     if (db.isEnabled()) {
       await db.query("INSERT INTO rooms (code, speaker_user_id) VALUES ($1, $2)", [code, req.user.id]);
     }
@@ -396,9 +396,12 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-// code -> { clients: Map(clientId -> {ws, name, role}), broadcasterId, speakerUserId }
+// code -> { clients: Map(clientId -> {ws, name, role}), broadcasterId, speakerUserId, speakerWsId, publishers:Set }
 // 방은 POST /api/rooms 로만 생긴다. 없는 코드는 입장이 거절된다.
 const rooms = new Map();
+
+// 강연자가 동시에 받는 체험자 화면 수 상한. P2P라 강연자 기기가 감당할 수 있는 선을 지킨다.
+const MAX_PUBLISHERS = 10;
 
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) {
@@ -421,9 +424,24 @@ function broadcastParticipants(roomId) {
     name: c.name,
     role: c.role || "viewer",
   }));
+  const publishers = Array.from(room.publishers || []);
   for (const [, c] of room.clients) {
-    send(c.ws, { type: "participants", list, broadcasterId: room.broadcasterId });
+    send(c.ws, { type: "participants", list, broadcasterId: room.broadcasterId, publishers });
   }
+}
+
+// 체험자가 강연자에게 화면을 보내는 것을 끊는다.
+function removePublisher(roomId, id, tellPublisher) {
+  const room = rooms.get(roomId);
+  if (!room || !room.publishers || !room.publishers.has(id)) return;
+  room.publishers.delete(id);
+  const speaker = room.speakerWsId ? room.clients.get(room.speakerWsId) : null;
+  if (speaker) send(speaker.ws, { type: "publisher-stopped", id });
+  if (tellPublisher) {
+    const pub = room.clients.get(id);
+    if (pub) send(pub.ws, { type: "publish-ended", reason: "강연자가 방을 비웠습니다." });
+  }
+  broadcastParticipants(roomId);
 }
 
 function stopBroadcast(roomId, notifyOldBroadcaster) {
@@ -609,6 +627,36 @@ wss.on("connection", (ws, req, sessionUser) => {
       return;
     }
 
+    // ── 체험자가 강연자에게 보내는 방향(N대 1) ──
+    if (msg.type === "start-publish") {
+      const speakerId = room.speakerWsId;
+      const speaker = speakerId ? room.clients.get(speakerId) : null;
+      if (!speaker) {
+        send(ws, { type: "publish-rejected", reason: "강연자가 아직 방에 들어오지 않았습니다." });
+        return;
+      }
+      if (clientId === speakerId) return;
+      if (!room.publishers) room.publishers = new Set();
+      if (!room.publishers.has(clientId) && room.publishers.size >= MAX_PUBLISHERS) {
+        send(ws, {
+          type: "publish-rejected",
+          reason: `한 번에 ${MAX_PUBLISHERS}명까지 공유할 수 있습니다. 한 명이 멈추면 다시 시도하세요.`,
+        });
+        return;
+      }
+      room.publishers.add(clientId);
+      const me = room.clients.get(clientId);
+      send(ws, { type: "publish-accepted", speakerId });
+      send(speaker.ws, { type: "publisher-started", id: clientId, name: me ? me.name : "체험자" });
+      broadcastParticipants(currentRoomId);
+      return;
+    }
+
+    if (msg.type === "stop-publish") {
+      removePublisher(currentRoomId, clientId, false);
+      return;
+    }
+
     if (msg.type === "offer" || msg.type === "answer" || msg.type === "ice") {
       const target = room.clients.get(msg.to);
       if (target) {
@@ -626,7 +674,12 @@ wss.on("connection", (ws, req, sessionUser) => {
     if (room.broadcasterId === clientId) {
       stopBroadcast(currentRoomId, false);
     }
-    if (room.speakerWsId === clientId) room.speakerWsId = null;
+    removePublisher(currentRoomId, clientId, false);
+    if (room.speakerWsId === clientId) {
+      room.speakerWsId = null;
+      // 받을 사람이 없으니 보내던 체험자들을 모두 멈춘다.
+      for (const id of Array.from(room.publishers || [])) removePublisher(currentRoomId, id, true);
+    }
     // 방은 비어도 지우지 않는다. 강연자가 새로고침해도 코드가 살아 있어야 한다.
     // 방을 없애는 길은 POST /api/rooms/close 와 강연자가 새 방을 여는 경우뿐이다.
     broadcastParticipants(currentRoomId);
@@ -648,6 +701,8 @@ async function restoreRooms() {
         clients: new Map(),
         broadcasterId: null,
         speakerUserId: r.speaker_user_id === null ? null : Number(r.speaker_user_id),
+        speakerWsId: null,
+        publishers: new Set(),
       });
     });
     return rows.length;

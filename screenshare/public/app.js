@@ -32,8 +32,6 @@ let myRoom = "";
 let ws = null;
 let isBroadcaster = false;
 let localStream = null;
-const peerConnections = {}; // remoteId -> RTCPeerConnection (내가 발표자일 때 여러 개)
-let viewerPc = null; // 내가 시청자일 때 발표자와의 연결 하나
 
 const joinScreen = document.getElementById("joinScreen");
 const roomScreen = document.getElementById("roomScreen");
@@ -63,6 +61,7 @@ const shareBtn = document.getElementById("shareBtn");
 const shareBtnLabel = document.getElementById("shareBtnLabel");
 const shareStatus = document.getElementById("shareStatus");
 const remoteVideo = document.getElementById("remoteVideo");
+const viewerFrame = document.getElementById("viewerFrame");
 const viewerPlaceholder = document.getElementById("viewerPlaceholder");
 const placeholderTitle = document.getElementById("placeholderTitle");
 const placeholderSub = document.getElementById("placeholderSub");
@@ -242,12 +241,19 @@ function onJoined(room, role) {
   // 방 종료와 기록물 초기화는 강연자만 한다.
   closeRoomBtn.classList.toggle("hidden", role !== "speaker");
   resetRecordsBtn.classList.toggle("hidden", role !== "speaker");
+
+  // 강연자는 체험자 화면을 격자로 받고, 체험자는 강연자 시범 화면 하나를 본다.
+  const speaker = role === "speaker";
+  gridWrap.classList.toggle("hidden", !speaker);
+  viewerFrame.classList.toggle("hidden", speaker);
+  setShareButton(false, speaker ? "시범 공유 시작하기" : "내 화면 공유하기");
+
   setupRecords();
 }
 
 // 강연자가 방을 닫으면 체험자 쪽에서 뜬다. 공유를 정리하고 알린다.
 function alertRoomClosed(reason) {
-  if (isBroadcaster) stopSharing(false);
+  if (isBroadcaster) myRole === "speaker" ? stopDemo(false) : stopPublishing(false);
   const modal = document.getElementById("closedModal");
   document.getElementById("closedModalDesc").textContent = reason || "강연자가 방을 종료했습니다.";
   modal.classList.add("is-open");
@@ -286,30 +292,46 @@ function handleMessage(msg) {
       alertRoomClosed(msg.reason);
       break;
     case "participants":
-      renderParticipants(msg.list, msg.broadcasterId);
+      renderParticipants(msg.list, msg.broadcasterId, msg.publishers);
       break;
     case "broadcaster-changed":
       onBroadcasterChanged(msg.broadcasterId, msg.name);
       break;
     case "you-are-broadcaster":
-      startBroadcastingTo(msg.viewerIds);
+      // 강연자 시범 공유. 지금 방에 있는 체험자 전원에게 연결을 연다.
+      msg.viewerIds.forEach(connectDemoTo);
       break;
     case "new-viewer":
-      if (isBroadcaster && localStream) {
-        connectToViewer(msg.id);
-      }
+      if (myRole === "speaker" && localStream) connectDemoTo(msg.id);
+      break;
+    case "publish-accepted":
+      onPublishAccepted(msg.speakerId);
+      break;
+    case "publish-rejected":
+      stopPublishing(false);
+      shareStatus.textContent = msg.reason || "지금은 공유할 수 없습니다.";
+      break;
+    case "publish-ended":
+      stopPublishing(false);
+      shareStatus.textContent = msg.reason || "공유가 끝났습니다.";
+      break;
+    case "publisher-started":
+      onPublisherStarted(msg.id, msg.name);
+      break;
+    case "publisher-stopped":
+      onPublisherStopped(msg.id);
       break;
     case "offer":
-      handleOffer(msg.from, msg.sdp);
+      handleOffer(msg.from, msg.sdp, msg.channel);
       break;
     case "answer":
-      handleAnswer(msg.from, msg.sdp);
+      handleAnswer(msg.from, msg.sdp, msg.channel);
       break;
     case "ice":
-      handleIce(msg.from, msg.candidate);
+      handleIce(msg.from, msg.candidate, msg.channel);
       break;
     case "force-stop-share":
-      stopSharing(false);
+      stopDemo(false);
       break;
     case "records-init":
       renderAllRecords(msg.list || []);
@@ -323,17 +345,20 @@ function handleMessage(msg) {
   }
 }
 
-function renderParticipants(list, broadcasterId) {
+function renderParticipants(list, broadcasterId, publishers) {
+  const sharing = new Set(publishers || []);
   participantCount.textContent = `참가자 ${list.length}명`;
   participantList.innerHTML = list
     .map((p) => {
       const initial = p.name.slice(0, 1).toUpperCase();
-      const presenting = p.id === broadcasterId;
+      const demo = p.id === broadcasterId;
+      const publish = sharing.has(p.id);
+      const tag = demo ? "시범중" : publish ? "공유중" : p.role === "speaker" ? "강연자" : "";
       return `
-        <li class="participant-item ${presenting ? "is-presenting" : ""}">
+        <li class="participant-item ${demo || publish ? "is-presenting" : ""}">
           <span class="avatar" style="background:${avatarColor(p.name)}">${escapeHtml(initial)}</span>
           <span class="p-name">${escapeHtml(p.name)}${p.id === myId ? " (나)" : ""}</span>
-          ${presenting ? '<span class="p-tag">발표중</span>' : ""}
+          ${tag ? `<span class="p-tag ${p.role === "speaker" && !demo && !publish ? "is-role" : ""}">${tag}</span>` : ""}
         </li>`;
     })
     .join("");
@@ -346,12 +371,12 @@ function escapeHtml(str) {
 }
 
 function onBroadcasterChanged(broadcasterId, name) {
-  if (broadcasterId === myId) return; // 내가 발표자면 별도 처리 안 함
+  if (broadcasterId === myId || myRole === "speaker") return;
 
-  // 이전 시청 연결 정리
-  if (viewerPc) {
-    viewerPc.close();
-    viewerPc = null;
+  // 이전 시범 수신 연결 정리
+  if (demoPc) {
+    demoPc.close();
+    demoPc = null;
   }
   remoteVideo.srcObject = null;
 
@@ -370,122 +395,313 @@ function onBroadcasterChanged(broadcasterId, name) {
   }
 }
 
-// ── 발표자 쪽 로직 ──
-shareBtn.addEventListener("click", async () => {
-  if (isBroadcaster) {
-    stopSharing(true);
-    return;
-  }
+// ══════════ 화면 공유 ══════════
+// 방향이 둘이다.
+//  publish : 체험자 여러 명이 강연자 한 명에게 보낸다(N대 1). 보내는 쪽이 offer를 만든다.
+//  demo    : 강연자가 체험자 전원에게 시범을 보인다(1대 N). 기존 방식 그대로다.
+// 두 방향의 연결이 같은 상대와 동시에 살 수 있으므로 모든 시그널에 channel을 붙여 구분한다.
+
+// 강연자 기기와 강의실 네트워크가 감당할 수 있게 낮게 잡는다. 격자에서는 작게 보이므로 충분하다.
+const CAPTURE_CONSTRAINTS = {
+  video: { frameRate: { max: 8 }, width: { max: 1280 }, height: { max: 720 } },
+  audio: false,
+};
+
+let myPublishStream = null; // 내가 강연자에게 보내는 중인 화면
+let publishPc = null; // 체험자일 때 강연자로 향하는 연결 하나
+let publishTargetId = null;
+const incoming = new Map(); // 강연자일 때 체험자별 수신 연결. viewerId -> {pc, name, stream}
+const demoPcs = new Map(); // 강연자일 때 시범 송출 연결. viewerId -> pc
+let demoPc = null; // 체험자일 때 강연자 시범을 받는 연결 하나
+
+function newPeer() {
+  return new RTCPeerConnection({ iceServers: ICE_SERVERS });
+}
+
+// 캡처 트랙에 힌트를 준다. 문서와 코드 화면이 대부분이라 선명도를 우선한다.
+function hintDetail(stream) {
+  const track = stream.getVideoTracks()[0];
+  if (track && "contentHint" in track) track.contentHint = "detail";
+  return track;
+}
+
+function sendSignal(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+// ── 체험자: 내 화면을 강연자에게 보낸다 ──
+
+async function startPublishing() {
   try {
-    localStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 10 },
-      audio: false,
-    });
+    myPublishStream = await navigator.mediaDevices.getDisplayMedia(CAPTURE_CONSTRAINTS);
   } catch (e) {
     shareStatus.textContent = "화면 공유가 취소되었습니다.";
     return;
   }
-
+  hintDetail(myPublishStream).addEventListener("ended", () => stopPublishing(true));
   isBroadcaster = true;
-  shareBtnLabel.textContent = "공유 중지";
-  shareBtn.classList.add("active");
-  shareStatus.textContent = "내 화면을 공유하고 있습니다.";
-  setPlaceholder("gone");
-  presenterBadge.classList.remove("hidden");
-  presenterBadge.textContent = "나의 화면 공유 중";
-  dotLive.classList.add("is-live");
-  remoteVideo.srcObject = localStream;
-
-  localStream.getVideoTracks()[0].addEventListener("ended", () => {
-    stopSharing(true);
-  });
-
-  ws.send(JSON.stringify({ type: "start-share" }));
-});
-
-function startBroadcastingTo(viewerIds) {
-  viewerIds.forEach((id) => connectToViewer(id));
+  setShareButton(true, "공유 중지");
+  shareStatus.textContent = "내 화면을 강연자에게 보내고 있습니다.";
+  sendSignal({ type: "start-publish" });
 }
 
-function connectToViewer(viewerId) {
-  if (peerConnections[viewerId]) return;
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  peerConnections[viewerId] = pc;
+// 서버가 받아주면 그때 강연자를 향해 offer를 만든다.
+async function onPublishAccepted(speakerId) {
+  publishTargetId = speakerId;
+  if (publishPc) publishPc.close();
+  publishPc = newPeer();
+  myPublishStream.getTracks().forEach((t) => publishPc.addTrack(t, myPublishStream));
+  publishPc.onicecandidate = (e) => {
+    if (e.candidate) sendSignal({ type: "ice", to: speakerId, channel: "publish", candidate: e.candidate });
+  };
+  const offer = await publishPc.createOffer();
+  await publishPc.setLocalDescription(offer);
+  sendSignal({ type: "offer", to: speakerId, channel: "publish", sdp: publishPc.localDescription });
+}
 
-  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+function stopPublishing(notifyServer) {
+  isBroadcaster = false;
+  if (myPublishStream) {
+    myPublishStream.getTracks().forEach((t) => t.stop());
+    myPublishStream = null;
+  }
+  if (publishPc) {
+    publishPc.close();
+    publishPc = null;
+  }
+  publishTargetId = null;
+  setShareButton(false, "내 화면 공유하기");
+  shareStatus.textContent = "";
+  if (notifyServer) sendSignal({ type: "stop-publish" });
+}
 
+// ── 강연자: 체험자 화면을 격자로 받는다 ──
+
+function onPublisherStarted(id, name) {
+  if (!incoming.has(id)) incoming.set(id, { pc: null, name, stream: null });
+  else incoming.get(id).name = name;
+  renderGrid();
+}
+
+function onPublisherStopped(id) {
+  const entry = incoming.get(id);
+  if (entry && entry.pc) entry.pc.close();
+  incoming.delete(id);
+  if (zoomedCellId === id) closeCellZoom();
+  renderGrid();
+}
+
+// 체험자가 보낸 offer를 받아 수신 연결을 만든다.
+async function acceptPublish(fromId, sdp) {
+  const entry = incoming.get(fromId) || { name: "체험자", pc: null, stream: null };
+  if (entry.pc) entry.pc.close();
+  const pc = newPeer();
+  entry.pc = pc;
+  incoming.set(fromId, entry);
+
+  pc.ontrack = (e) => {
+    entry.stream = e.streams[0];
+    renderGrid();
+  };
   pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      ws.send(JSON.stringify({ type: "ice", to: viewerId, candidate: e.candidate }));
-    }
+    if (e.candidate) sendSignal({ type: "ice", to: fromId, channel: "publish", candidate: e.candidate });
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") renderGrid();
   };
 
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  sendSignal({ type: "answer", to: fromId, channel: "publish", sdp: pc.localDescription });
+  renderGrid();
+}
+
+// ── 강연자: 시범 화면을 체험자 전원에게 보낸다(1대 N) ──
+
+async function startDemo() {
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia(CAPTURE_CONSTRAINTS);
+  } catch (e) {
+    shareStatus.textContent = "화면 공유가 취소되었습니다.";
+    return;
+  }
+  hintDetail(localStream).addEventListener("ended", () => stopDemo(true));
+  isBroadcaster = true;
+  setShareButton(true, "시범 공유 중지");
+  shareStatus.textContent = "내 화면을 체험자 전원에게 보이고 있습니다.";
+  dotLive.classList.add("is-live");
+  sendSignal({ type: "start-share" });
+}
+
+function connectDemoTo(viewerId) {
+  if (demoPcs.has(viewerId) || !localStream) return;
+  const pc = newPeer();
+  demoPcs.set(viewerId, pc);
+  localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+  pc.onicecandidate = (e) => {
+    if (e.candidate) sendSignal({ type: "ice", to: viewerId, channel: "demo", candidate: e.candidate });
+  };
   pc.createOffer()
     .then((offer) => pc.setLocalDescription(offer))
-    .then(() => {
-      ws.send(JSON.stringify({ type: "offer", to: viewerId, sdp: pc.localDescription }));
-    });
+    .then(() => sendSignal({ type: "offer", to: viewerId, channel: "demo", sdp: pc.localDescription }));
 }
 
-function handleAnswer(fromId, sdp) {
-  const pc = peerConnections[fromId];
-  if (pc) pc.setRemoteDescription(new RTCSessionDescription(sdp));
-}
-
-function stopSharing(notifyServer) {
+function stopDemo(notifyServer) {
   isBroadcaster = false;
   if (localStream) {
     localStream.getTracks().forEach((t) => t.stop());
     localStream = null;
   }
-  Object.values(peerConnections).forEach((pc) => pc.close());
-  Object.keys(peerConnections).forEach((k) => delete peerConnections[k]);
-
-  shareBtnLabel.textContent = "내 화면 공유하기";
-  shareBtn.classList.remove("active");
+  demoPcs.forEach((pc) => pc.close());
+  demoPcs.clear();
+  setShareButton(false, "시범 공유 시작하기");
   shareStatus.textContent = "";
-  remoteVideo.srcObject = null;
-  setPlaceholder("idle");
-  presenterBadge.classList.add("hidden");
   dotLive.classList.remove("is-live");
-
-  if (notifyServer && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "stop-share" }));
-  }
+  if (notifyServer) sendSignal({ type: "stop-share" });
 }
 
-// ── 시청자 쪽 로직 ──
-function handleOffer(fromId, sdp) {
-  if (viewerPc) {
-    viewerPc.close();
-    viewerPc = null;
-  }
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  viewerPc = pc;
+// ── 체험자: 강연자 시범 화면을 받는다 ──
 
-  pc.ontrack = (e) => {
+async function acceptDemo(fromId, sdp) {
+  if (demoPc) demoPc.close();
+  demoPc = newPeer();
+  demoPc.ontrack = (e) => {
     remoteVideo.srcObject = e.streams[0];
     setPlaceholder("gone");
   };
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      ws.send(JSON.stringify({ type: "ice", to: fromId, candidate: e.candidate }));
-    }
+  demoPc.onicecandidate = (e) => {
+    if (e.candidate) sendSignal({ type: "ice", to: fromId, channel: "demo", candidate: e.candidate });
   };
-
-  pc.setRemoteDescription(new RTCSessionDescription(sdp))
-    .then(() => pc.createAnswer())
-    .then((answer) => pc.setLocalDescription(answer))
-    .then(() => {
-      ws.send(JSON.stringify({ type: "answer", to: fromId, sdp: pc.localDescription }));
-    });
+  await demoPc.setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer = await demoPc.createAnswer();
+  await demoPc.setLocalDescription(answer);
+  sendSignal({ type: "answer", to: fromId, channel: "demo", sdp: demoPc.localDescription });
 }
 
-function handleIce(fromId, candidate) {
-  const pc = isBroadcaster ? peerConnections[fromId] : viewerPc;
+// ── 시그널 라우팅 ──
+
+function pcFor(channel, fromId) {
+  if (channel === "publish") {
+    // 강연자면 그 체험자에게서 받는 연결, 체험자면 내가 보내는 연결.
+    return myRole === "speaker" ? (incoming.get(fromId) || {}).pc : publishPc;
+  }
+  return myRole === "speaker" ? demoPcs.get(fromId) : demoPc;
+}
+
+function handleOffer(fromId, sdp, channel) {
+  if (channel === "publish") return acceptPublish(fromId, sdp);
+  return acceptDemo(fromId, sdp);
+}
+
+function handleAnswer(fromId, sdp, channel) {
+  const pc = pcFor(channel, fromId);
+  if (pc) pc.setRemoteDescription(new RTCSessionDescription(sdp)).catch(() => {});
+}
+
+function handleIce(fromId, candidate, channel) {
+  const pc = pcFor(channel, fromId);
   if (pc) pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
 }
+
+// ── 공유 버튼 ──
+
+function setShareButton(active, label) {
+  shareBtn.classList.toggle("active", active);
+  shareBtnLabel.textContent = label;
+}
+
+shareBtn.addEventListener("click", () => {
+  if (myRole === "speaker") {
+    isBroadcaster ? stopDemo(true) : startDemo();
+  } else {
+    isBroadcaster ? stopPublishing(true) : startPublishing();
+  }
+});
+
+// ── 격자 ──
+
+let zoomedCellId = null;
+const screenGrid = document.getElementById("screenGrid");
+const gridWrap = document.getElementById("gridWrap");
+const gridEmpty = document.getElementById("gridEmpty");
+const gridCount = document.getElementById("gridCount");
+const gridFullBtn = document.getElementById("gridFullBtn");
+const gridFullLabel = document.getElementById("gridFullLabel");
+const cellZoom = document.getElementById("cellZoom");
+const cellZoomVideo = document.getElementById("cellZoomVideo");
+const cellZoomName = document.getElementById("cellZoomName");
+const cellZoomClose = document.getElementById("cellZoomClose");
+
+// 셀은 지우고 다시 만들지 않는다. video 엘리먼트를 다시 만들면 재생이 끊긴다.
+function renderGrid() {
+  const ids = Array.from(incoming.keys());
+  gridCount.textContent = ids.length ? ` ${ids.length}명` : "";
+  gridEmpty.classList.toggle("hidden", ids.length > 0);
+  screenGrid.dataset.count = String(ids.length);
+
+  ids.forEach((id) => {
+    const entry = incoming.get(id);
+    let cell = screenGrid.querySelector(`[data-cell="${id}"]`);
+    if (!cell) {
+      cell = document.createElement("div");
+      cell.className = "grid-cell";
+      cell.dataset.cell = id;
+      cell.innerHTML = `
+        <video autoplay playsinline muted></video>
+        <span class="cell-name"></span>
+        <button type="button" class="cell-zoom-btn" aria-label="크게 보기">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <span class="cell-waiting">연결하는 중입니다</span>`;
+      cell.querySelector(".cell-zoom-btn").addEventListener("click", () => openCellZoom(id));
+      screenGrid.appendChild(cell);
+    }
+    const video = cell.querySelector("video");
+    if (entry.stream && video.srcObject !== entry.stream) video.srcObject = entry.stream;
+    cell.classList.toggle("is-live", Boolean(entry.stream));
+    cell.querySelector(".cell-name").textContent = entry.name;
+  });
+
+  // 나간 사람 셀은 지운다.
+  screenGrid.querySelectorAll(".grid-cell").forEach((cell) => {
+    if (!incoming.has(cell.dataset.cell)) cell.remove();
+  });
+}
+
+function openCellZoom(id) {
+  const entry = incoming.get(id);
+  if (!entry || !entry.stream) return;
+  zoomedCellId = id;
+  cellZoomVideo.srcObject = entry.stream;
+  cellZoomName.textContent = entry.name;
+  cellZoom.classList.add("is-open");
+  cellZoomClose.focus();
+}
+
+function closeCellZoom() {
+  zoomedCellId = null;
+  cellZoom.classList.remove("is-open");
+  cellZoomVideo.srcObject = null;
+}
+cellZoomClose.addEventListener("click", closeCellZoom);
+cellZoom.addEventListener("click", (e) => {
+  if (e.target === cellZoom) closeCellZoom();
+});
+
+// 빔프로젝터로 쏠 때 격자만 전체 화면으로 띄운다.
+gridFullBtn.addEventListener("click", async () => {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  } else {
+    await gridWrap.requestFullscreen().catch(() => {});
+  }
+});
+document.addEventListener("fullscreenchange", () => {
+  const on = Boolean(document.fullscreenElement);
+  gridWrap.classList.toggle("is-full", on);
+  gridFullLabel.textContent = on ? "전체 화면 끄기" : "전체 화면으로 보기";
+});
 
 // ── 나가기 ──
 leaveBtn.addEventListener("click", () => {
@@ -493,7 +709,8 @@ leaveBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  if (isBroadcaster) stopSharing(true);
+  if (!isBroadcaster) return;
+  myRole === "speaker" ? stopDemo(true) : stopPublishing(true);
 });
 
 // ══════════ 실습 기록물 ══════════
@@ -694,6 +911,10 @@ document.addEventListener("keydown", (e) => {
   }
   if (lightbox.classList.contains("is-open")) {
     closeLightbox();
+    return;
+  }
+  if (cellZoom.classList.contains("is-open")) {
+    closeCellZoom();
     return;
   }
   if (resetModal.classList.contains("is-open")) closeResetModal();
