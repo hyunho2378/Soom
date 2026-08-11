@@ -189,7 +189,8 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .btn-ghost:hover{border-color:var(--line-strong); color:var(--ink); background:var(--bg)}
 
 .room-body{
-  flex:1; display:grid; grid-template-columns:1fr 260px; gap:20px;
+  /* 1fr은 min-width auto라 내용보다 작아지지 않는다. 좁은 화면에서 트랙이 안 줄어 가로 스크롤이 생긴다 */
+  flex:1; display:grid; grid-template-columns:minmax(0, 1fr) 260px; gap:20px;
   padding:24px; max-width:1400px; margin:0 auto; width:100%;
 }
 .viewer-area{display:flex; flex-direction:column; gap:16px; min-width:0}
@@ -254,21 +255,30 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .btn-grid-full{display:inline-flex; align-items:center; gap:7px; padding:8px 14px 8px 12px}
 
 .screen-grid{
-  display:grid; gap:10px; align-content:start;
+  --gap:10px;
+  /* 격자는 빔프로젝터로 한눈에 보는 화면이다. 스크롤이 생기면 감시 기능을 잃는다.
+     그래서 남는 세로 높이에서 역산해 격자 전체 폭을 묶고, 셀은 16대 9를 그대로 지킨다. */
+  --chrome:300px;
+  --avail:calc(100dvh - var(--chrome));
+  --cell-h:calc((var(--avail) - (var(--rows) - 1) * var(--gap)) / var(--rows));
+  display:grid; gap:var(--gap); align-content:start; justify-content:center;
   grid-template-columns:repeat(var(--cols, 1), minmax(0, 1fr));
+  width:100%;
+  max-width:calc(var(--cell-h) * 16 / 9 * var(--cols) + (var(--cols) - 1) * var(--gap));
+  margin-inline:auto;
 }
-/* 인원에 따라 열 수를 바꾼다. 한 명이면 크게, 늘수록 촘촘하게 */
+/* 인원에 따라 열과 행을 바꾼다. 한 명이면 크게, 늘수록 촘촘하게 */
 .screen-grid[data-count="0"],
-.screen-grid[data-count="1"]{--cols:1}
-.screen-grid[data-count="2"],
+.screen-grid[data-count="1"]{--cols:1; --rows:1}
+.screen-grid[data-count="2"]{--cols:2; --rows:1}
 .screen-grid[data-count="3"],
-.screen-grid[data-count="4"]{--cols:2}
+.screen-grid[data-count="4"]{--cols:2; --rows:2}
 .screen-grid[data-count="5"],
-.screen-grid[data-count="6"],
+.screen-grid[data-count="6"]{--cols:3; --rows:2}
 .screen-grid[data-count="7"],
 .screen-grid[data-count="8"],
-.screen-grid[data-count="9"],
-.screen-grid[data-count="10"]{--cols:3}
+.screen-grid[data-count="9"]{--cols:3; --rows:3}
+.screen-grid[data-count="10"]{--cols:3; --rows:4}
 
 .grid-cell{
   position:relative; aspect-ratio:16/9; background:var(--viewer);
@@ -289,12 +299,13 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   transition:opacity var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
 }
 .grid-cell:hover .cell-zoom-btn,.cell-zoom-btn:focus-visible{opacity:1}
+/* 마우스가 없는 기기에서는 hover가 없으니 늘 보여준다 */
+@media (hover:none){ .cell-zoom-btn{opacity:1} }
 .cell-waiting{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   color:var(--viewer-ink); font-size:13px;
 }
 .grid-cell.is-live .cell-waiting{display:none}
-.grid-cell.is-live .cell-zoom-btn{opacity:0}
 .grid-empty{
   grid-column:1 / -1; aspect-ratio:16/9; background:var(--viewer); border-radius:var(--r-md);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -302,10 +313,9 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 }
 .grid-empty p{margin:0; font-size:14px}
 
-/* 전체 화면일 때는 격자가 화면을 다 쓴다 */
-.grid-wrap.is-full{background:var(--bg); padding:16px; gap:10px}
-.grid-wrap.is-full .screen-grid{flex:1; align-content:center}
-.grid-wrap.is-full .grid-cell{max-height:calc((100vh - 90px) / var(--rows, 1))}
+/* 전체 화면일 때는 위아래 여백만 줄이고 같은 계산을 쓴다 */
+.grid-wrap.is-full{background:var(--bg); padding:16px; gap:10px; justify-content:center}
+.grid-wrap.is-full .screen-grid{--chrome:90px}
 
 /* 셀 크게 보기 */
 .cell-zoom{
@@ -358,6 +368,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 }
 .p-name{font-size:14px; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .p-tag{font-size:11px; font-weight:700; color:var(--blue); flex-shrink:0}
+.p-tag.is-role{color:var(--sub)}
 
 /* 기록물 패널 */
 .panel-records{display:flex; flex-direction:column; gap:16px}
@@ -642,10 +653,13 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 .reset-status{font-size:13px; color:var(--red); margin:4px 0 0; min-height:16px}
 
 @media (max-width:860px){
-  .room-body{grid-template-columns:1fr}
-  .screen-grid[data-count]{--cols:2}
+  .room-body{grid-template-columns:minmax(0, 1fr)}
+  .screen-grid[data-count]{--cols:2; --rows:3; --chrome:380px}
   .screen-grid[data-count="0"],
-  .screen-grid[data-count="1"]{--cols:1}
+  .screen-grid[data-count="1"]{--cols:1; --rows:1}
+  .screen-grid[data-count="2"]{--rows:1}
+  .screen-grid[data-count="3"],
+  .screen-grid[data-count="4"]{--rows:2}
   /* 참가자는 가로 띠로 접어서 공유 화면을 접힘 위에 남긴다 */
   .participant-panel{order:-1; padding:12px 14px}
   .participant-panel h2{margin-bottom:8px}
@@ -658,7 +672,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 }
 @media (max-width:420px){
   .room-header{padding:12px 16px}
-  .screen-grid[data-count]{--cols:1}
+  .screen-grid[data-count]{--cols:1; --rows:1; --chrome:0px; max-width:100%}
   .grid-head{flex-direction:column; align-items:stretch; gap:8px}
   .room-body{padding:16px}
   .record-form{padding:16px}
@@ -679,6 +693,7 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
   .panel-live:not(.hidden),.panel-records:not(.hidden),.presenter-badge:not(.hidden){animation:none}
   .dropdown-panel,.dropdown-panel.is-open{scale:1}
   .lightbox-img,.lightbox.is-open .lightbox-img{scale:1}
+  .cell-zoom-frame,.cell-zoom.is-open .cell-zoom-frame{scale:1}
   .modal-card,.modal-overlay.is-open .modal-card{scale:1; translate:0 0}
   .dropdown-caret,.dropdown-trigger[aria-expanded="true"] .dropdown-caret{transition:none}
   .icon-swap svg{scale:1 !important; filter:none !important}
@@ -687,4 +702,5 @@ button:not(:disabled):not(.dropdown-option):active{scale:.96}
 @media (prefers-reduced-transparency: reduce){
   .room-header{background:var(--card); backdrop-filter:none}
   .presenter-badge{background:var(--blue); backdrop-filter:none}
+  .cell-name,.cell-zoom-btn,.cell-zoom-name{background:var(--viewer); backdrop-filter:none}
 }

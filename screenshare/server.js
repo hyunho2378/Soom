@@ -466,7 +466,22 @@ app.get("/api/items", (req, res) => {
 });
 
 // 기록물 올리기. 이미지 여러 장 포함(multipart/form-data).
-app.post("/api/records", upload.array("files", 10), async (req, res) => {
+// multer가 막은 경우에도 HTML 오류 페이지 대신 JSON을 준다. 클라이언트가 res.json()으로 읽기 때문이다.
+function receiveFiles(req, res, next) {
+  upload.array("files", 10)(req, res, (err) => {
+    if (!err) return next();
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "파일 하나가 너무 큽니다. 이미지는 5MB, 문서는 15MB까지 올릴 수 있습니다."
+        : err.code === "LIMIT_FILE_COUNT"
+        ? "한 번에 열 개까지 올릴 수 있습니다."
+        : "파일을 받지 못했습니다. 파일 종류와 개수를 확인하세요.";
+    console.error("업로드 거절:", err.code || err.message);
+    res.status(400).json({ error: message });
+  });
+}
+
+app.post("/api/records", receiveFiles, async (req, res) => {
   const room = String(req.body.room || "").trim();
   const name = String(req.body.name || "익명").trim().slice(0, 20) || "익명";
   const itemCode = String(req.body.itemCode || "").trim();

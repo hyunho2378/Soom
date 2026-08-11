@@ -654,7 +654,8 @@ function renderGrid() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
         </button>
         <span class="cell-waiting">연결하는 중입니다</span>`;
-      cell.querySelector(".cell-zoom-btn").addEventListener("click", () => openCellZoom(id));
+      const zoomBtn = cell.querySelector(".cell-zoom-btn");
+      zoomBtn.addEventListener("click", () => openCellZoom(id, zoomBtn));
       screenGrid.appendChild(cell);
     }
     const video = cell.querySelector("video");
@@ -669,13 +670,18 @@ function renderGrid() {
   });
 }
 
-function openCellZoom(id) {
+let cellZoomOpener = null;
+
+function openCellZoom(id, opener) {
   const entry = incoming.get(id);
   if (!entry || !entry.stream) return;
   zoomedCellId = id;
+  // 누른 버튼을 직접 받아 둔다. activeElement에 기대면 프로그램 클릭에서 놓친다.
+  cellZoomOpener = opener || null;
   cellZoomVideo.srcObject = entry.stream;
   cellZoomName.textContent = entry.name;
   cellZoom.classList.add("is-open");
+  document.body.style.overflow = "hidden";
   cellZoomClose.focus();
 }
 
@@ -683,10 +689,16 @@ function closeCellZoom() {
   zoomedCellId = null;
   cellZoom.classList.remove("is-open");
   cellZoomVideo.srcObject = null;
+  document.body.style.overflow = "";
+  if (cellZoomOpener && document.body.contains(cellZoomOpener)) cellZoomOpener.focus();
+  cellZoomOpener = null;
 }
 cellZoomClose.addEventListener("click", closeCellZoom);
 cellZoom.addEventListener("click", (e) => {
   if (e.target === cellZoom) closeCellZoom();
+});
+cellZoom.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") trapFocus(e, cellZoom);
 });
 
 // 빔프로젝터로 쏠 때 격자만 전체 화면으로 띄운다.
