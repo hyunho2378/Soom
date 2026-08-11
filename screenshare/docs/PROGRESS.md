@@ -90,6 +90,29 @@
 - 참가자 목록이 participants 수신마다 innerHTML 로 통째로 다시 그려져 항목 전환에 트랜지션이 안 걸린다. 대인원에서 문제되면 키 기반 갱신으로 바꾼다.
 - 라이트박스 이미지 전환 자체에는 모션이 없다(교체만 한다). 필요해지면 교차 페이드를 넣는다.
 
+## BUILD_SPEC 0단계 배선 (2026-08-11)
+docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화면 공유와 기록물은 기존 그대로 돈다.
+
+### 완료
+- 패키지 설치: pg, passport, passport-google-oauth20, express-session, connect-pg-simple, @vercel/blob. 취약점 0건.
+- db/schema.sql: users, records, record_files와 인덱스 2개. 전부 IF NOT EXISTS라 반복 실행에 안전하다. 세션 테이블은 connect-pg-simple이 만들므로 넣지 않았다.
+- db/index.js: Pool 생성, init()에서 연결 확인 후 schema.sql을 그대로 적용하고 만들어진 테이블 이름을 로그로 찍는다.
+  DATABASE_URL이 없거나 연결에 실패해도 예외를 던지지 않고 false를 돌려준다. DB가 없어도 화면 공유는 돌아야 하기 때문이다.
+- server.js: db 모듈 require와 부팅부만 바꿨다. db.init() 후 listen 하고 DB 연결 여부를 기동 로그에 남긴다.
+  시그널링 핸들러와 기록물 REST는 한 줄도 손대지 않았다.
+- .env.example: 8개 키와 각각 어디서 발급하는지, SESSION_SECRET 생성 명령까지 적었다.
+- package.json: start를 node --env-file-if-exists=.env 로 바꿔 dotenv 의존성을 안 넣었다.
+  이 플래그가 Node 20.12 이상이라 engines.node를 >=18에서 >=20.12.0으로 올렸다. Render가 engines를 보고 버전을 맞춘다.
+
+### 검증(실행 기준)
+- .env 없이 부팅: DATABASE_URL 없음 경고 후 정상 기동. GET / 200, GET /api/items 200, WS join 후 participants 수신 확인.
+- 잘못된 DATABASE_URL로 부팅: DB 연결 실패 메시지를 남기고도 서버는 뜨고 GET / 200.
+- .env가 git check-ignore로 차단되는지 확인. 추적 대상 0건.
+- server.js와 db/index.js node --check 통과.
+
+### 미검증(값이 있어야 가능)
+- 실제 Neon 연결과 테이블 생성. 로컬에 Postgres가 없어 DATABASE_URL을 받아야 확인할 수 있다. 0단계 완료 판정은 이 확인 뒤로 미룬다.
+
 ## 선택 개선(미적용, 제안)
 - 영속화 강화: 무료 플랜 디스크 휘발 대응. SQLite(better-sqlite3) 또는 Render Persistent Disk 유료 옵션. 현재는 JSON 파일이라 재배포 시 소실 가능.
 - 막힌 네트워크: 화면이 안 뜨면 app.js ICE_SERVERS에 무료 TURN 추가.

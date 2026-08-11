@@ -4,14 +4,20 @@
   "private": true,
   "description": "동해 AI 교육용 실시간 화면 공유 도구",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --env-file-if-exists=.env server.js"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.0",
+    "connect-pg-simple": "^10.0.0",
     "express": "^4.19.2",
-    "ws": "^8.17.0",
-    "multer": "^2.0.1"
+    "express-session": "^1.19.0",
+    "multer": "^2.0.1",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.23.0",
+    "ws": "^8.17.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.12.0"
   }
 }

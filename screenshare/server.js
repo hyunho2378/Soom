@@ -10,6 +10,7 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const db = require("./db");
 
 // 업로드 이미지와 기록물 영속화 파일 경로. 없으면 만든다.
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -291,6 +292,10 @@ wss.on("connection", (ws) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`서버 실행 중: http://localhost:${PORT}`);
+
+// DB 연결과 스키마 적용을 끝낸 뒤 듣기 시작한다. DB가 없어도 서버는 뜬다.
+db.init().then((ok) => {
+  server.listen(PORT, () => {
+    console.log(`서버 실행 중: http://localhost:${PORT} (DB ${ok ? "연결됨" : "미연결"})`);
+  });
 });
