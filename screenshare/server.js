@@ -131,7 +131,11 @@ async function insertRecord({ room, name, userId, item, summary, files }) {
   return toRecord(row, saved);
 }
 
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 const app = express();
+// Render는 리버스 프록시 뒤에서 돈다. 이게 없으면 세션 쿠키 secure가 안 먹고 req.protocol이 늘 http로 잡힌다.
+app.set("trust proxy", 1);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -146,7 +150,13 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || "개발용 임시 비밀키",
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", maxAge: 12 * 60 * 60 * 1000 },
+  cookie: {
+    // 배포(HTTPS)에서만 secure를 켠다. 로컬은 http라 켜면 쿠키가 아예 안 붙는다.
+    secure: IS_PRODUCTION,
+    sameSite: "lax",
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000,
+  },
 });
 app.use(sessionMiddleware);
 app.use(passport.initialize());
@@ -191,6 +201,7 @@ if (googleReady) {
              RETURNING id, email, name`,
             [profile.id, email, name]
           );
+          console.log(`[Auth] login userId:${rows[0].id} email:${rows[0].email}`);
           done(null, rows[0]);
         } catch (e) {
           done(e);
@@ -201,6 +212,25 @@ if (googleReady) {
 } else {
   console.warn("구글 로그인 꺼짐: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, DATABASE_URL을 모두 채워야 켜집니다.");
 }
+
+// Render Health Check Path 대상. 콜드 스타트 깨우기에도 쓴다.
+app.get("/health", async (req, res) => {
+  let dbState = "disconnected";
+  if (db.isEnabled()) {
+    try {
+      await db.query("SELECT 1");
+      dbState = "connected";
+    } catch (e) {
+      console.error(`[API] error route:/health status:200 message:${e.message}`);
+    }
+  }
+  res.json({
+    ok: true,
+    db: dbState,
+    rooms: rooms.size,
+    uptime: Math.round(process.uptime()),
+  });
+});
 
 app.get("/auth/google", (req, res, next) => {
   if (!googleReady) return res.status(503).send("구글 로그인이 아직 설정되지 않았습니다.");
@@ -217,6 +247,7 @@ app.get(
 );
 
 app.post("/auth/logout", (req, res) => {
+  if (req.user) console.log(`[Auth] logout userId:${req.user.id}`);
   const done = () => req.session.destroy(() => res.json({ ok: true }));
   req.logout ? req.logout(done) : done();
 });
@@ -258,6 +289,7 @@ function newRoomCode() {
 
 // 방을 닫는다. 안에 있던 체험자에게 알리고 연결 상태를 정리한다.
 async function closeRoom(code, reason) {
+  console.log(`[Room] closed code:${code} reason:${reason || "종료"}`);
   const room = rooms.get(code);
   if (room) {
     for (const [, c] of room.clients) {
@@ -284,12 +316,13 @@ app.post("/api/rooms", requireSpeaker, async (req, res) => {
     }
     const code = newRoomCode();
     rooms.set(code, { clients: new Map(), broadcasterId: null, speakerUserId: req.user.id, speakerWsId: null, publishers: new Set() });
+    console.log(`[Room] created code:${code} speaker:${req.user.id}`);
     if (db.isEnabled()) {
       await db.query("INSERT INTO rooms (code, speaker_user_id) VALUES ($1, $2)", [code, req.user.id]);
     }
     res.json({ code });
   } catch (e) {
-    console.error("방 만들기 실패:", e.message);
+    console.error(`[API] error route:/api/rooms status:500 message:${e.message}`);
     res.status(500).json({ error: "방을 만들지 못했습니다." });
   }
 });
@@ -483,7 +516,7 @@ function receiveFiles(req, res, next) {
         : err.code === "LIMIT_FILE_COUNT"
         ? "한 번에 열 개까지 올릴 수 있습니다."
         : "파일을 받지 못했습니다. 파일 종류와 개수를 확인하세요.";
-    console.error("업로드 거절:", err.code || err.message);
+    console.error(`[API] error route:/api/records status:400 message:${err.code || err.message}`);
     res.status(400).json({ error: message });
   });
 }
@@ -519,7 +552,7 @@ app.post("/api/records", receiveFiles, async (req, res) => {
   try {
     uploaded = await Promise.all(files.map(putToBlob));
   } catch (e) {
-    console.error("Blob 업로드 실패:", e.message);
+    console.error(`[API] error route:/api/records status:502 message:${e.message}`);
     await removeFromBlob(uploaded.map((f) => f.url));
     return res.status(502).json({ error: "파일을 저장하지 못했습니다. 다시 시도하세요." });
   }
@@ -536,7 +569,7 @@ app.post("/api/records", receiveFiles, async (req, res) => {
       files: uploaded,
     });
   } catch (e) {
-    console.error("기록물 저장 실패:", e.message);
+    console.error(`[API] error route:/api/records status:500 message:${e.message}`);
     await removeFromBlob(uploaded.map((f) => f.url));
     return res.status(500).json({ error: "기록물을 저장하지 못했습니다." });
   }
@@ -544,6 +577,7 @@ app.post("/api/records", receiveFiles, async (req, res) => {
   const list = await loadRoomRecords(room);
   list.push(record);
 
+  console.log(`[API] POST /api/records room:${room} files:${uploaded.length}`);
   broadcastToRoom(room, { type: "record-added", record });
   res.json({ ok: true, record });
 });
@@ -560,7 +594,7 @@ app.post("/api/records/reset", requireSpeaker, async (req, res) => {
   const list = await loadRoomRecords(room);
   // Blob 파일을 먼저 지우고, DB 행은 records를 지우면 record_files가 CASCADE로 함께 사라진다.
   const urls = list.flatMap((r) => (r.files || []).map((f) => f.url));
-  console.log(`방 ${room} 초기화: 기록물 ${list.length}건, 파일 ${urls.length}개 삭제`);
+  console.log(`[API] POST /api/records/reset room:${room} deleted:${list.length}records ${urls.length}files`);
   await removeFromBlob(urls);
   if (db.isEnabled()) {
     await db.query("DELETE FROM records WHERE room = $1", [room]).catch((e) => {
@@ -594,6 +628,7 @@ wss.on("connection", (ws, req, sessionUser) => {
       // 없는 코드는 즉시 거절한다. 방은 강연자가 만들 때만 생긴다.
       const room = rooms.get(code);
       if (!room) {
+        console.log(`[WS] type:join from:${clientId} room:${code} -> rejected(없는 코드)`);
         send(ws, { type: "join-rejected", reason: "그런 방이 없습니다. 코드를 다시 확인하세요." });
         return;
       }
@@ -603,7 +638,11 @@ wss.on("connection", (ws, req, sessionUser) => {
       currentRoomId = code;
       room.clients.set(clientId, { ws, name, role: isSpeaker ? "speaker" : "viewer" });
       if (isSpeaker) room.speakerWsId = clientId;
-      send(ws, { type: "joined", room: code, role: isSpeaker ? "speaker" : "viewer" });
+      const role = isSpeaker ? "speaker" : "viewer";
+      console.log(`[WS] type:join from:${clientId} room:${code} role:${role}`);
+      console.log(`[Room] join code:${code} name:${name} role:${role}`);
+      if (sessionUser) console.log(`[Auth] role ${role} userId:${sessionUser.id} room:${code}`);
+      send(ws, { type: "joined", room: code, role });
       broadcastParticipants(currentRoomId);
 
       // 이 방의 기존 기록물을 새로 들어온 사람에게 보낸다.
@@ -626,6 +665,7 @@ wss.on("connection", (ws, req, sessionUser) => {
     if (!room) return;
 
     if (msg.type === "start-share") {
+      console.log(`[WS] type:start-share from:${clientId} room:${currentRoomId}`);
       // 이미 다른 발표자가 있으면 자동으로 넘겨받는다.
       if (room.broadcasterId && room.broadcasterId !== clientId) {
         stopBroadcast(currentRoomId, true);
@@ -643,6 +683,7 @@ wss.on("connection", (ws, req, sessionUser) => {
     }
 
     if (msg.type === "stop-share") {
+      console.log(`[WS] type:stop-share from:${clientId} room:${currentRoomId}`);
       if (room.broadcasterId === clientId) {
         stopBroadcast(currentRoomId, false);
       }
@@ -654,12 +695,14 @@ wss.on("connection", (ws, req, sessionUser) => {
       const speakerId = room.speakerWsId;
       const speaker = speakerId ? room.clients.get(speakerId) : null;
       if (!speaker) {
+        console.log(`[WS] type:start-publish from:${clientId} room:${currentRoomId} -> rejected(강연자 부재)`);
         send(ws, { type: "publish-rejected", reason: "강연자가 아직 방에 들어오지 않았습니다." });
         return;
       }
       if (clientId === speakerId) return;
       if (!room.publishers) room.publishers = new Set();
       if (!room.publishers.has(clientId) && room.publishers.size >= MAX_PUBLISHERS) {
+        console.log(`[WS] type:start-publish from:${clientId} room:${currentRoomId} -> rejected(정원 초과 ${MAX_PUBLISHERS})`);
         send(ws, {
           type: "publish-rejected",
           reason: `한 번에 ${MAX_PUBLISHERS}명까지 공유할 수 있습니다. 한 명이 멈추면 다시 시도하세요.`,
@@ -668,6 +711,7 @@ wss.on("connection", (ws, req, sessionUser) => {
       }
       room.publishers.add(clientId);
       const me = room.clients.get(clientId);
+      console.log(`[WS] type:start-publish from:${clientId} room:${currentRoomId} -> accepted`);
       send(ws, { type: "publish-accepted", speakerId });
       send(speaker.ws, { type: "publisher-started", id: clientId, name: me ? me.name : "체험자" });
       broadcastParticipants(currentRoomId);
@@ -675,12 +719,19 @@ wss.on("connection", (ws, req, sessionUser) => {
     }
 
     if (msg.type === "stop-publish") {
+      console.log(`[WS] type:stop-publish from:${clientId} room:${currentRoomId}`);
       removePublisher(currentRoomId, clientId, false);
       return;
     }
 
     if (msg.type === "offer" || msg.type === "answer" || msg.type === "ice") {
       const target = room.clients.get(msg.to);
+      // ice는 연결마다 수십 개가 날아와 로그를 덮는다. offer와 answer만 남긴다.
+      if (msg.type !== "ice") {
+        console.log(
+          `[WS] type:${msg.type} from:${clientId} to:${msg.to} room:${currentRoomId} channel:${msg.channel || "-"}${target ? "" : " -> 대상없음"}`
+        );
+      }
       if (target) {
         send(target.ws, { ...msg, from: clientId });
       }
@@ -693,6 +744,7 @@ wss.on("connection", (ws, req, sessionUser) => {
     const room = rooms.get(currentRoomId);
     if (!room) return;
     room.clients.delete(clientId);
+    console.log(`[Room] leave code:${currentRoomId} ${clientId}`);
     if (room.broadcasterId === clientId) {
       stopBroadcast(currentRoomId, false);
     }

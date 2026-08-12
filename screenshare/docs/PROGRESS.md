@@ -394,3 +394,43 @@ docs/BUILD_SPEC.md의 0단계. 코드 동작은 아직 바꾸지 않았다. 화�
   공유 중지 시 버튼 복귀와 셀 제거, 콘솔 예외 0건.
 - 권한 회귀 6개 항목 통과. 기록물 올리기, 재기동 후 my-room 코드 복구, 남의 방 종료 403,
   주인의 기록물 초기화 200, 주인의 방 종료 200, 닫힌 코드 404.
+
+## BUILD_SPEC v2 A그룹 + D1: 배포 규율과 로깅 (2026-08-12)
+v2에서 새로 생긴 델타만 반영했다. 이미 되어 있던 것(ws/wss 자동 판별, sameUser, --env-file-if-exists,
+multer limits, 파일 타입 6종, UI 6-1~6-5)은 확인만 하고 다시 만들지 않았다.
+
+### A1. trust proxy
+- app.set("trust proxy", 1). Render는 리버스 프록시 뒤라 이게 없으면 세션 쿠키 secure가 안 먹고
+  req.protocol이 늘 http로 잡힌다.
+
+### A2. 세션 쿠키
+- secure는 NODE_ENV === "production"일 때만 켠다. 로컬은 http라 켜면 쿠키가 아예 안 붙는다.
+- sameSite lax, httpOnly 유지. maxAge를 12시간에서 24시간으로 올렸다.
+
+### A3. /health
+- GET /health가 { ok, db, rooms, uptime }을 준다. db는 SELECT 1을 실제로 쳐서 판정한다.
+- Render Settings의 Health Check Path에 등록할 대상이고, 강의 전 콜드 스타트 깨우기에도 쓴다.
+
+### A4. .env.example
+- NODE_ENV 항목 추가. Render 대시보드에만 production으로 넣고 로컬에는 넣지 말라고 적었다.
+- PORT 설명도 Render 대시보드에 등록하지 말라고 고쳤다.
+
+### D1. 로깅 태그
+- [WS] 9건: join(수락/거절), start-share, stop-share, start-publish(accepted/rejected 사유), stop-publish, offer, answer.
+- [Room] 4건: created, closed, join, leave.
+- [Auth] 3건: login, logout, role.
+- [API] 7건: records 등록, reset(삭제 건수), 오류 4종(route/status/message).
+- SDP 본문과 요청 본문, 세션 토큰은 안 찍는다. ice는 연결마다 수십 개라 로그를 덮으므로 제외했다.
+
+### 검증(로컬 서버, 실제 브라우저 2대)
+- GET /health 200 + db connected + rooms/uptime 반환.
+- X-Forwarded-Proto가 붙어도 정상 처리(trust proxy 반영).
+- 로컬 http에서 세션이 붙고, 새로고침 후에도 살아 방 코드를 되찾는다.
+- [Room] created, [WS] type:join role:speaker, [Room] join, [Auth] role speaker 확인.
+- 체험자 입장도 [Room] join name/role로 남는다.
+- 화면 공유 시 [WS] start-publish accepted, offer/answer가 channel:publish와 함께 찍힌다.
+  SDP 본문 미노출, ice 미노출 확인. 격자 재생 1셀로 회귀 없음.
+- [API] POST /api/records files:1, reset deleted:1records 1files.
+- [Room] closed 확인. [Room] leave는 방이 살아 있을 때의 정상 이탈에서 확인했다
+  (방을 닫으면 방이 먼저 사라져 close 핸들러가 조기 반환하므로 leave를 남기지 않는다. 의도된 동작).
+- 없는 코드 입장 거절도 [WS] type:join -> rejected(없는 코드)로 남는다.
