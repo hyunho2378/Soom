@@ -189,6 +189,34 @@ joinBtn.addEventListener("click", () => {
 
 initJoinScreen();
 
+// ── 연결과 재연결 ──
+// 강의 중 와이파이가 깜빡여도 사람이 새로고침하지 않게 스스로 다시 붙는다.
+const MAX_RECONNECT = 10;
+const connBar = document.getElementById("connBar");
+const connText = document.getElementById("connText");
+const connRetryBtn = document.getElementById("connRetryBtn");
+
+let joinedOnce = false; // 한 번이라도 방에 들어갔는지(그 뒤부터 재연결 대상)
+let reconnectTries = 0;
+let reconnectTimer = null;
+let leavingOnPurpose = false;
+
+function showConnBar(text, retry) {
+  connText.textContent = text;
+  connRetryBtn.classList.toggle("hidden", !retry);
+  connBar.classList.remove("hidden");
+  document.body.classList.add("has-conn-bar");
+  connBar.classList.toggle("is-dead", Boolean(retry));
+  // 끊긴 동안에는 올려도 남들이 실시간으로 못 받는다.
+  if (submitRecordBtn) submitRecordBtn.disabled = true;
+}
+function hideConnBar() {
+  connBar.classList.add("hidden");
+  document.body.classList.remove("has-conn-bar");
+  connBar.classList.remove("is-dead");
+  if (submitRecordBtn) submitRecordBtn.disabled = false;
+}
+
 function join(room, name, role) {
   myRoom = room;
   myName = name;
@@ -197,7 +225,11 @@ function join(room, name, role) {
   btn.disabled = true;
   btn.textContent = "입장하는 중입니다";
   joinHint.textContent = "";
+  openSocket();
+}
 
+function openSocket() {
+  clearTimeout(reconnectTimer);
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}`);
 
@@ -207,20 +239,45 @@ function join(room, name, role) {
   });
 
   ws.addEventListener("message", (evt) => {
-    const msg = JSON.parse(evt.data);
-    handleMessage(msg);
+    handleMessage(JSON.parse(evt.data));
   });
 
   ws.addEventListener("close", () => {
-    if (!joinScreen.classList.contains("hidden")) return;
-    shareStatus.textContent = "연결이 끊어졌습니다. 페이지를 새로고침하세요.";
+    if (leavingOnPurpose) return;
+    // 아직 한 번도 못 들어갔으면 입장 실패로 다룬다(재연결은 방에 들어간 뒤부터).
+    if (!joinedOnce) {
+      resetJoinButton();
+      joinHint.textContent = "연결에 실패했습니다. 잠시 후 다시 시도하세요.";
+      return;
+    }
+    scheduleReconnect();
   });
 
   ws.addEventListener("error", () => {
-    resetJoinButton();
-    joinHint.textContent = "연결에 실패했습니다. 잠시 후 다시 시도하세요.";
+    if (!joinedOnce) {
+      resetJoinButton();
+      joinHint.textContent = "연결에 실패했습니다. 잠시 후 다시 시도하세요.";
+    }
   });
 }
+
+function scheduleReconnect() {
+  if (reconnectTries >= MAX_RECONNECT) {
+    showConnBar("연결할 수 없습니다. 새로고침하세요.", true);
+    return;
+  }
+  // 1s, 2s, 4s로 늘리되 30s에서 멈춘다.
+  const wait = Math.min(1000 * Math.pow(2, reconnectTries), 30000);
+  reconnectTries += 1;
+  showConnBar(`연결이 끊겼습니다. 재연결 중입니다. (${reconnectTries}/${MAX_RECONNECT})`, false);
+  reconnectTimer = setTimeout(openSocket, wait);
+}
+
+connRetryBtn.addEventListener("click", () => {
+  reconnectTries = 0;
+  showConnBar("연결이 끊겼습니다. 재연결 중입니다.", false);
+  openSocket();
+});
 
 function resetJoinButton() {
   joinBtn.disabled = false;
@@ -230,7 +287,14 @@ function resetJoinButton() {
 }
 
 // 서버가 역할을 확정해 돌려준 다음에 회의실로 넘어간다.
+// 재연결로 다시 들어온 경우에도 같은 경로를 탄다.
 function onJoined(room, role) {
+  const isReconnect = joinedOnce;
+  joinedOnce = true;
+  reconnectTries = 0;
+  hideConnBar();
+  hideSpeakerGone();
+
   myRole = role;
   joinScreen.classList.add("hidden");
   roomScreen.classList.remove("hidden");
@@ -249,6 +313,30 @@ function onJoined(room, role) {
   setShareButton(false, speaker ? "시범 공유 시작하기" : "내 화면 공유하기");
 
   setupRecords();
+
+  // 재연결이면 보내던 화면을 이어서 살린다. 스트림은 아직 살아 있으므로 시그널만 다시 태운다.
+  if (isReconnect && isBroadcaster) {
+    if (speaker && localStream) {
+      sendSignal({ type: "start-share" });
+    } else if (!speaker && myPublishStream) {
+      sendSignal({ type: "start-publish" });
+    } else {
+      // 스트림이 이미 죽었으면 버튼만 원래대로 돌린다.
+      speaker ? stopDemo(false) : stopPublishing(false);
+    }
+  }
+}
+
+// C2. 강연자 연결이 끊기면 체험자에게 대기 안내를 띄운다. 방은 살아 있다.
+function showSpeakerGone() {
+  if (myRole === "speaker") return;
+  showConnBar("강연자 연결이 끊겼습니다. 돌아올 때까지 기다리세요.", false);
+  connBar.classList.add("is-warn");
+  // 강연자가 없으면 보낼 곳이 없다.
+  if (isBroadcaster) stopPublishing(false);
+}
+function hideSpeakerGone() {
+  connBar.classList.remove("is-warn");
 }
 
 // 강연자가 방을 닫으면 체험자 쪽에서 뜬다. 공유를 정리하고 알린다.
@@ -258,6 +346,8 @@ function alertRoomClosed(reason) {
   document.getElementById("closedModalDesc").textContent = reason || "강연자가 방을 종료했습니다.";
   modal.classList.add("is-open");
   document.getElementById("closedModalBtn").focus();
+  leavingOnPurpose = true;
+  hideConnBar();
   if (ws) ws.close();
 }
 document.getElementById("closedModalBtn").addEventListener("click", () => {
@@ -286,10 +376,18 @@ function handleMessage(msg) {
     case "join-rejected":
       resetJoinButton();
       joinHint.textContent = msg.reason || "입장하지 못했습니다.";
+      leavingOnPurpose = true;
       ws.close();
       break;
     case "room-closed":
       alertRoomClosed(msg.reason);
+      break;
+    case "speaker-disconnected":
+      showSpeakerGone();
+      break;
+    case "speaker-reconnected":
+      hideSpeakerGone();
+      hideConnBar();
       break;
     case "participants":
       renderParticipants(msg.list, msg.broadcasterId, msg.publishers);
@@ -637,10 +735,6 @@ const gridEmpty = document.getElementById("gridEmpty");
 const gridCount = document.getElementById("gridCount");
 const gridFullBtn = document.getElementById("gridFullBtn");
 const gridFullLabel = document.getElementById("gridFullLabel");
-const cellZoom = document.getElementById("cellZoom");
-const cellZoomVideo = document.getElementById("cellZoomVideo");
-const cellZoomName = document.getElementById("cellZoomName");
-const cellZoomClose = document.getElementById("cellZoomClose");
 
 // 셀은 지우고 다시 만들지 않는다. video 엘리먼트를 다시 만들면 재생이 끊긴다.
 function renderGrid() {
@@ -664,7 +758,11 @@ function renderGrid() {
         </button>
         <span class="cell-waiting">연결하는 중입니다</span>`;
       const zoomBtn = cell.querySelector(".cell-zoom-btn");
-      zoomBtn.addEventListener("click", () => openCellZoom(id, zoomBtn));
+      zoomBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleCellZoom(id);
+      });
+      cell.addEventListener("click", () => toggleCellZoom(id));
       screenGrid.appendChild(cell);
     }
     const video = cell.querySelector("video");
@@ -677,38 +775,42 @@ function renderGrid() {
   screenGrid.querySelectorAll(".grid-cell").forEach((cell) => {
     if (!incoming.has(cell.dataset.cell)) cell.remove();
   });
+
+  applyZoomState();
 }
 
-let cellZoomOpener = null;
+// 확대한 셀에만 표시를 붙이고 격자에 상태를 알린다. CSS가 나머지를 띠로 줄인다.
+function applyZoomState() {
+  const active = zoomedCellId && incoming.has(zoomedCellId) ? zoomedCellId : null;
+  zoomedCellId = active;
+  screenGrid.classList.toggle("has-zoom", Boolean(active));
+  // 하나뿐이면 확대 손잡이를 감춘다.
+  screenGrid.classList.toggle("solo", incoming.size < 2);
+  screenGrid.querySelectorAll(".grid-cell").forEach((cell) => {
+    const on = cell.dataset.cell === active;
+    cell.classList.toggle("is-zoomed", on);
+    const btn = cell.querySelector(".cell-zoom-btn");
+    if (btn) {
+      btn.setAttribute("aria-pressed", String(on));
+      btn.setAttribute("aria-label", on ? "격자로 돌아가기" : "크게 보기");
+    }
+  });
+}
 
-function openCellZoom(id, opener) {
+function toggleCellZoom(id) {
   const entry = incoming.get(id);
   if (!entry || !entry.stream) return;
-  zoomedCellId = id;
-  // 누른 버튼을 직접 받아 둔다. activeElement에 기대면 프로그램 클릭에서 놓친다.
-  cellZoomOpener = opener || null;
-  cellZoomVideo.srcObject = entry.stream;
-  cellZoomName.textContent = entry.name;
-  cellZoom.classList.add("is-open");
-  document.body.style.overflow = "hidden";
-  cellZoomClose.focus();
+  // 셀이 하나뿐이면 이미 가장 크다. 확대할 것이 없다.
+  if (incoming.size < 2 && zoomedCellId !== id) return;
+  zoomedCellId = zoomedCellId === id ? null : id;
+  applyZoomState();
 }
 
 function closeCellZoom() {
+  if (!zoomedCellId) return;
   zoomedCellId = null;
-  cellZoom.classList.remove("is-open");
-  cellZoomVideo.srcObject = null;
-  document.body.style.overflow = "";
-  if (cellZoomOpener && document.body.contains(cellZoomOpener)) cellZoomOpener.focus();
-  cellZoomOpener = null;
+  applyZoomState();
 }
-cellZoomClose.addEventListener("click", closeCellZoom);
-cellZoom.addEventListener("click", (e) => {
-  if (e.target === cellZoom) closeCellZoom();
-});
-cellZoom.addEventListener("keydown", (e) => {
-  if (e.key === "Tab") trapFocus(e, cellZoom);
-});
 
 // 빔프로젝터로 쏠 때 격자만 전체 화면으로 띄운다.
 gridFullBtn.addEventListener("click", async () => {
@@ -726,6 +828,7 @@ document.addEventListener("fullscreenchange", () => {
 
 // ── 나가기 ──
 leaveBtn.addEventListener("click", () => {
+  leavingOnPurpose = true;
   window.location.reload();
 });
 
@@ -887,7 +990,7 @@ document.addEventListener("keydown", (e) => {
     closeLightbox();
     return;
   }
-  if (cellZoom.classList.contains("is-open")) {
+  if (zoomedCellId) {
     closeCellZoom();
     return;
   }

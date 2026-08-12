@@ -651,12 +651,43 @@ wss.on("connection", (ws, req, sessionUser) => {
 
       // 클라가 role을 실어 보내도 믿지 않는다. 세션으로 다시 판정한다.
       const isSpeaker = Boolean(sessionUser) && canSpeak(sessionUser) && sameUser(room.speakerUserId, sessionUser.id);
-      currentRoomId = code;
-      room.clients.set(clientId, { ws, name, role: isSpeaker ? "speaker" : "viewer" });
-      if (isSpeaker) room.speakerWsId = clientId;
+
+      // C4. 한 방의 강연자는 한 명이다. 다른 로그인 유저가 남의 방에 들어오려 하면 거절한다.
+      if (!isSpeaker && sessionUser && canSpeak(sessionUser)) {
+        console.log(`[WS] type:join from:${clientId} room:${code} -> rejected(다른 강연자 계정)`);
+        send(ws, {
+          type: "join-rejected",
+          reason: "이 방에는 이미 강연자가 있습니다. 로그아웃한 뒤 코드로 들어오세요.",
+        });
+        return;
+      }
+
       const role = isSpeaker ? "speaker" : "viewer";
+
+      // C3. 같은 이름과 같은 역할로 다시 들어오면 앞선 연결은 끊긴 것으로 보고 자리를 넘겨준다.
+      for (const [oldId, c] of Array.from(room.clients)) {
+        if (oldId !== clientId && c.name === name && (c.role || "viewer") === role) {
+          console.log(`[Room] stale code:${code} ${oldId} -> ${clientId} name:${name}`);
+          room.clients.delete(oldId);
+          if (room.publishers) room.publishers.delete(oldId);
+          if (room.speakerWsId === oldId) room.speakerWsId = null;
+          if (room.broadcasterId === oldId) room.broadcasterId = null;
+          try {
+            c.ws.close();
+          } catch (e) {}
+        }
+      }
+
+      currentRoomId = code;
+      room.clients.set(clientId, { ws, name, role });
+      if (isSpeaker) room.speakerWsId = clientId;
       console.log(`[WS] type:join from:${clientId} room:${code} role:${role}`);
       console.log(`[Room] join code:${code} name:${name} role:${role}`);
+      if (isSpeaker) {
+        for (const [id, c] of room.clients) {
+          if (id !== clientId) send(c.ws, { type: "speaker-reconnected" });
+        }
+      }
       if (sessionUser) console.log(`[Auth] role ${role} userId:${sessionUser.id} room:${code}`);
       send(ws, { type: "joined", room: code, role });
       broadcastParticipants(currentRoomId);
@@ -767,8 +798,13 @@ wss.on("connection", (ws, req, sessionUser) => {
     removePublisher(currentRoomId, clientId, false);
     if (room.speakerWsId === clientId) {
       room.speakerWsId = null;
+      console.log(`[Room] speaker-disconnected code:${currentRoomId}`);
       // 받을 사람이 없으니 보내던 체험자들을 모두 멈춘다.
       for (const id of Array.from(room.publishers || [])) removePublisher(currentRoomId, id, true);
+      // 방은 살아 있다. 강연자가 돌아올 때까지 기다리라고 알린다.
+      for (const [, c] of room.clients) {
+        send(c.ws, { type: "speaker-disconnected" });
+      }
     }
     // 방은 비어도 지우지 않는다. 강연자가 새로고침해도 코드가 살아 있어야 한다.
     // 방을 없애는 길은 POST /api/rooms/close 와 강연자가 새 방을 여는 경우뿐이다.

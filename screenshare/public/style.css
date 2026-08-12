@@ -59,6 +59,7 @@
   --dur-1:120ms;
   --dur-2:180ms;
   --dur-3:260ms;
+  --conn-h:38px;
 
   /* 아바타 팔레트. app.js가 이 값을 읽어간다 */
   --avatar-1:#0053F0;
@@ -169,6 +170,30 @@ button:not(:disabled):not(.item-option):active{scale:.96}
 .btn-close-room{color:var(--red)}
 .btn-close-room:hover{border-color:var(--red); color:var(--red); background:var(--red-tint)}
 .btn-modal{width:auto; margin-top:0; padding:11px 20px}
+
+/* 연결 상태 바. 화면 맨 위에 붙어 상태만 알린다 */
+.conn-bar{
+  position:fixed; top:0; left:0; right:0; z-index:90;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  height:var(--conn-h); padding:0 16px; font-size:13px; font-weight:700; color:#fff;
+  background:var(--ink);
+}
+/* 바가 떠 있는 동안에는 화면을 그만큼 내려 sticky 헤더를 안 덮게 한다 */
+body.has-conn-bar{padding-top:var(--conn-h)}
+body.has-conn-bar .room-header{top:var(--conn-h)}
+.conn-dot{width:8px; height:8px; border-radius:50%; background:var(--orange); animation:pulse 1.6s infinite}
+.conn-bar.is-warn{background:var(--orange-dark)}
+.conn-bar.is-dead{background:var(--red-dark)}
+.conn-bar.is-dead .conn-dot{background:#fff; animation:none}
+.conn-retry{
+  border:1px solid rgba(255,255,255,.5); background:none; color:#fff; cursor:pointer;
+  border-radius:var(--r-sm); padding:5px 12px; font-size:12px; font-weight:700; font-family:inherit;
+  transition:background-color var(--dur-1) var(--ease), scale var(--dur-1) var(--ease);
+}
+.conn-retry:hover{background:rgba(255,255,255,.16)}
+
+/* 모바일에서 화면 공유를 막을 때 이유를 적는다 */
+.share-note{font-size:13px; color:var(--sub); margin:0}
 
 /* 회의실 화면 */
 .room-screen{min-height:100vh; display:flex; flex-direction:column}
@@ -324,26 +349,6 @@ button:not(:disabled):not(.item-option):active{scale:.96}
 /* 전체 화면일 때는 위아래 여백만 줄이고 같은 계산을 쓴다 */
 .grid-wrap.is-full{background:var(--bg); padding:16px; gap:10px; justify-content:center}
 .grid-wrap.is-full .screen-grid{--chrome:90px}
-
-/* 셀 크게 보기 */
-.cell-zoom{
-  position:fixed; inset:0; z-index:80; background:var(--scrim-strong);
-  display:flex; align-items:center; justify-content:center; padding:32px;
-  opacity:0; visibility:hidden; pointer-events:none;
-  transition:opacity 140ms var(--ease), visibility 0s linear 140ms;
-}
-.cell-zoom.is-open{
-  opacity:1; visibility:visible; pointer-events:auto;
-  transition:opacity var(--dur-2) var(--ease), visibility 0s linear 0s;
-}
-.cell-zoom-frame{position:relative; width:min(92vw, 1600px); aspect-ratio:16/9; scale:.97; transition:scale 140ms var(--ease)}
-.cell-zoom.is-open .cell-zoom-frame{scale:1; transition-duration:var(--dur-2)}
-.cell-zoom-frame video{width:100%; height:100%; object-fit:contain; background:var(--viewer); border-radius:var(--r-md)}
-.cell-zoom-name{
-  position:absolute; left:12px; bottom:12px; padding:6px 14px; border-radius:999px;
-  font-size:13px; font-weight:700; color:#fff;
-  background:var(--on-dark); backdrop-filter:blur(10px) saturate(160%);
-}
 
 .panel-live{display:flex; flex-direction:column; gap:16px}
 .share-controls{display:flex; align-items:center; gap:14px; width:var(--viewer-w); margin-inline:auto}
@@ -684,7 +689,7 @@ button:not(:disabled):not(.item-option):active{scale:.96}
 
 /* 움직임을 줄여달라고 하면 이동과 흐림만 걷어내고 색과 라벨은 그대로 둔다 */
 @media (prefers-reduced-motion: reduce){
-  .dot-live.is-live{animation:none}
+  .dot-live.is-live,.conn-dot{animation:none}
   button:not(:disabled):active{scale:1}
   .record-card.is-new{animation:none}
   .panel-live:not(.hidden),.panel-records:not(.hidden),.presenter-badge:not(.hidden){animation:none}

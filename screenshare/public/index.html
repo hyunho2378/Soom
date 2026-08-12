@@ -60,6 +60,13 @@
   </div>
 </section>
 
+<!-- 연결 상태 바. 끊기면 뜨고 붙으면 사라진다 -->
+<div id="connBar" class="conn-bar hidden" role="status">
+  <span class="conn-dot" aria-hidden="true"></span>
+  <span id="connText">연결이 끊겼습니다. 재연결 중입니다.</span>
+  <button type="button" id="connRetryBtn" class="conn-retry hidden">다시 시도하기</button>
+</div>
+
 <!-- 회의실 화면 -->
 <section id="roomScreen" class="room-screen hidden">
   <header class="room-header">
@@ -186,15 +193,6 @@
     </aside>
   </div>
 </section>
-
-<!-- 격자 셀 크게 보기 -->
-<div id="cellZoom" class="cell-zoom" role="dialog" aria-modal="true" aria-label="체험자 화면 크게 보기">
-  <button class="lightbox-close" id="cellZoomClose">닫기</button>
-  <div class="cell-zoom-frame">
-    <video id="cellZoomVideo" autoplay playsinline muted></video>
-    <span class="cell-zoom-name" id="cellZoomName"></span>
-  </div>
-</div>
 
 <!-- 이미지 확대 라이트박스 -->
 <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="첨부 이미지 확대">
