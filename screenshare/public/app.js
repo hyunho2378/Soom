@@ -1,14 +1,26 @@
 // 동해 AI 교육용 실시간 화면 공유 도구 — 클라이언트
 
-// ICE 서버 설정. 기본은 구글 무료 STUN만 사용한다.
-// 회사·기관 와이파이처럼 막힌 네트워크에서 화면이 안 뜨면,
-// 무료 TURN 서버(Metered, OpenRelay 등)에 가입해 아래 배열에 추가한다.
-// 예: { urls: "turn:openrelay.metered.ca:80", username: "...", credential: "..." }
-const ICE_SERVERS = [
+// ICE 서버 설정.
+// STUN만으로는 대칭 NAT이나 UDP를 막는 기관 와이파이에서 P2P가 성립하지 않는다.
+// 시그널링(offer/answer)은 멀쩡히 오가는데 화면만 안 뜨는 증상이 바로 그 경우다.
+// 그때 영상을 대신 날라주는 TURN이 필요한데, 자격증명은 주기적으로 갈리므로
+// 코드에 박지 않고 서버가 환경변수에서 읽어 내려주는 값을 쓴다.
+// 서버가 안 주면 구글 STUN만으로 간다. 같은 망 안에서는 그것으로 충분하다.
+let ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-  // 여기에 TURN 서버를 추가할 수 있다.
 ];
+
+async function loadIceServers() {
+  try {
+    const cfg = await (await fetch("/api/ice")).json();
+    if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) ICE_SERVERS = cfg.iceServers;
+    console.log(`[WebRTC] ICE 서버 ${ICE_SERVERS.length}개 로드, TURN ${cfg.turn ? "있음" : "없음"}`);
+  } catch (e) {
+    console.warn("[WebRTC] ICE 설정을 못 받아 기본 STUN으로 간다:", e.message);
+  }
+}
+loadIceServers();
 
 function randomId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -532,8 +544,47 @@ const incoming = new Map(); // 강연자일 때 체험자별 수신 연결. view
 const demoPcs = new Map(); // 강연자일 때 시범 송출 연결. viewerId -> pc
 let demoPc = null; // 체험자일 때 강연자 시범을 받는 연결 하나
 
-function newPeer() {
-  return new RTCPeerConnection({ iceServers: ICE_SERVERS });
+// 연결이 안 붙을 때 어디서 막혔는지 브라우저 콘솔만 보고 알 수 있게 네 가지를 남긴다.
+// candidate의 typ가 host뿐이면 STUN이 막힌 것이고, relay가 보이면 TURN이 도는 것이다.
+function newPeer(label) {
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  pc.addEventListener("icecandidate", (e) => {
+    console.log(`[WebRTC] ICE candidate: ${label}`, e.candidate ? e.candidate.candidate : "(수집 끝)");
+  });
+  pc.addEventListener("icecandidateerror", (e) => {
+    console.warn(`[WebRTC] ICE 서버 오류: ${label} ${e.url || ""} ${e.errorCode} ${e.errorText}`);
+  });
+  pc.addEventListener("iceconnectionstatechange", () => {
+    console.log(`[WebRTC] ICE state: ${label}`, pc.iceConnectionState);
+  });
+  pc.addEventListener("connectionstatechange", () => {
+    console.log(`[WebRTC] connection: ${label}`, pc.connectionState);
+  });
+  pc.addEventListener("track", (e) => {
+    console.log(`[WebRTC] track received: ${label}`, e.track.kind);
+  });
+  return pc;
+}
+
+// remoteDescription이 서기 전에 도착한 candidate는 브라우저가 거절한다.
+// offer를 받아 처리하는 사이에 상대의 첫 candidate들이 먼저 들어오므로 실제로 자주 벌어진다.
+// 버리지 말고 모아 뒀다가 설명이 선 직후에 넣는다.
+function addIce(pc, candidate) {
+  if (!pc.remoteDescription) {
+    (pc.pendingIce || (pc.pendingIce = [])).push(candidate);
+    return;
+  }
+  pc.addIceCandidate(new RTCIceCandidate(candidate)).catch((err) => {
+    console.warn("[WebRTC] ICE 추가 실패:", err.message);
+  });
+}
+
+function flushIce(pc) {
+  const queued = pc.pendingIce;
+  if (!queued || !queued.length) return;
+  pc.pendingIce = null;
+  console.log(`[WebRTC] 대기하던 ICE ${queued.length}개를 넣는다`);
+  queued.forEach((c) => addIce(pc, c));
 }
 
 // 캡처 트랙에 힌트를 준다. 문서와 코드 화면이 대부분이라 선명도를 우선한다.
@@ -572,7 +623,7 @@ async function startPublishing() {
 async function onPublishAccepted(speakerId) {
   publishTargetId = speakerId;
   if (publishPc) publishPc.close();
-  publishPc = newPeer();
+  publishPc = newPeer("publish->강연자");
   myPublishStream.getTracks().forEach((t) => publishPc.addTrack(t, myPublishStream));
   publishPc.onicecandidate = (e) => {
     if (e.candidate) sendSignal({ type: "ice", to: speakerId, channel: "publish", candidate: e.candidate });
@@ -622,7 +673,7 @@ function onPublisherStopped(id) {
 async function acceptPublish(fromId, sdp) {
   const entry = incoming.get(fromId) || { name: "체험자", pc: null, stream: null };
   if (entry.pc) entry.pc.close();
-  const pc = newPeer();
+  const pc = newPeer(`publish<-${fromId}`);
   entry.pc = pc;
   incoming.set(fromId, entry);
 
@@ -638,6 +689,7 @@ async function acceptPublish(fromId, sdp) {
   };
 
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  flushIce(pc);
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
   sendSignal({ type: "answer", to: fromId, channel: "publish", sdp: pc.localDescription });
@@ -663,7 +715,7 @@ async function startDemo() {
 
 function connectDemoTo(viewerId) {
   if (demoPcs.has(viewerId) || !localStream) return;
-  const pc = newPeer();
+  const pc = newPeer(`demo->${viewerId}`);
   demoPcs.set(viewerId, pc);
   localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
   pc.onicecandidate = (e) => {
@@ -692,7 +744,7 @@ function stopDemo(notifyServer) {
 
 async function acceptDemo(fromId, sdp) {
   if (demoPc) demoPc.close();
-  demoPc = newPeer();
+  demoPc = newPeer("demo<-강연자");
   demoPc.ontrack = (e) => {
     remoteVideo.srcObject = e.streams[0];
     setPlaceholder("gone");
@@ -701,6 +753,7 @@ async function acceptDemo(fromId, sdp) {
     if (e.candidate) sendSignal({ type: "ice", to: fromId, channel: "demo", candidate: e.candidate });
   };
   await demoPc.setRemoteDescription(new RTCSessionDescription(sdp));
+  flushIce(demoPc);
   const answer = await demoPc.createAnswer();
   await demoPc.setLocalDescription(answer);
   sendSignal({ type: "answer", to: fromId, channel: "demo", sdp: demoPc.localDescription });
@@ -723,12 +776,19 @@ function handleOffer(fromId, sdp, channel) {
 
 function handleAnswer(fromId, sdp, channel) {
   const pc = pcFor(channel, fromId);
-  if (pc) pc.setRemoteDescription(new RTCSessionDescription(sdp)).catch(() => {});
+  if (!pc) return;
+  pc.setRemoteDescription(new RTCSessionDescription(sdp))
+    .then(() => flushIce(pc))
+    .catch((err) => console.warn("[WebRTC] answer 처리 실패:", err.message));
 }
 
 function handleIce(fromId, candidate, channel) {
   const pc = pcFor(channel, fromId);
-  if (pc) pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+  if (!pc) {
+    console.warn(`[WebRTC] 받을 연결이 없어 ICE를 버린다 channel:${channel} from:${fromId}`);
+    return;
+  }
+  addIce(pc, candidate);
 }
 
 // ── 공유 버튼 ──

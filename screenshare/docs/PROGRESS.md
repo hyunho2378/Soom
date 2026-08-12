@@ -540,3 +540,43 @@ multer limits, 파일 타입 6종, UI 6-1~6-5)은 확인만 하고 다시 만들
 - 순차 업로드 코드 확인 + 3MB 문서 5개 동시 업로드 후에도 /health 200.
 - 11번째 공유 시도가 정원 초과 문구로 거절.
 - 상태 바 아래 38px에서 헤더가 시작해 가림 없음.
+
+## 배포 후 화면이 안 뜨던 문제 (ICE)
+
+증상: offer와 answer는 정상인데 격자에 화면이 안 뜬다. Render 로그에 type:ice가 한 줄도 없다.
+
+### 진단
+- ICE 중계 코드는 빠지지 않았다. server.js에서 offer, answer, ice가 같은 분기 하나로 중계된다.
+  app.js의 onicecandidate도 네 연결 전부에 붙어 있다.
+- Render 로그에 ice가 없던 것은 로그를 일부러 걸러냈기 때문이다. 증상이 아니라 설계였다.
+  이 단서로는 아무것도 판정할 수 없어 로그를 열었다.
+- 진짜 원인 후보 둘을 찾았고 둘 다 고쳤다.
+
+### 1. TURN 부재
+- 시그널링만 서버를 거치고 영상은 P2P다. 대칭 NAT이나 UDP를 막는 기관 와이파이에서는
+  STUN만으로 연결이 성립하지 않는다. 지금 증상과 정확히 일치한다.
+- 자격증명은 주기적으로 갈리므로 코드에 박지 않는다. 서버가 환경변수에서 읽어
+  GET /api/ice로 내려주고 클라가 부팅 때 한 번 받아 쓴다. 없으면 구글 STUN만 쓴다.
+- 무료 공개 TURN(openrelay.metered.ca)은 실제로 붙여 보니 죽어 있었다(701). 쓰지 않는다.
+- Render에 TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL 세 개를 넣으면 그때부터 릴레이가 돈다.
+
+### 2. 조기 도착 ICE candidate 유실 (실제 버그)
+- offer를 받아 setRemoteDescription을 기다리는 사이에 상대의 첫 candidate가 먼저 도착한다.
+  remoteDescription이 아직 없으면 브라우저가 거절하는데, 옛 코드의 catch가 그 실패를 통째로 삼켰다.
+- 받아 뒀다가 설명이 선 직후에 넣는 대기열(addIce, flushIce)을 넣었다.
+  setRemoteDescription을 하는 세 곳 모두에서 대기열을 비운다.
+- 검증에서 브라우저가 실제로 거절하는 것과, 대기열을 거친 candidate가 성공하는 것을 각각 확인했다.
+  로컬 실측에서도 매번 1건씩 대기열을 탔다. 지연이 큰 배포 환경에서는 더 많이 샜을 것이다.
+
+### 3. 로그
+- 서버: type:ice를 방향마다 첫 건만 남기고 이후 25건마다 누적을 찍는다. 대상없음은 언제나 남긴다.
+- 클라: ICE candidate, ICE state, connection, track received 네 가지를 newPeer 한 곳에서 붙였다.
+  연결마다 라벨이 달려 어느 방향이 막혔는지 콘솔만 보고 알 수 있다.
+
+### 검증 (21개 항목 통과)
+- 헤드리스 크롬 둘로 강연자와 체험자를 실제로 붙였다. 강연자 세션은 세션 표에 직접 심었다.
+- 강연자 수신 연결이 connected가 되고 getStats에 bytesReceived 21572, framesDecoded 62.
+- 서버 로그에 [WS] type:ice 양방향 기록. 폭주 없음(2줄), 대상없음 0건.
+- 클라 로그 네 종류 모두 출력. 버려지거나 실패한 candidate 0건.
+- TURN 환경변수를 넣으면 /api/ice 응답과 클라의 ICE_SERVERS가 그대로 일치함을 확인.
+- 검증용 유저와 방은 모두 지웠다. 실사용자 1명과 기록물 1건은 그대로다.

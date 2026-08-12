@@ -253,6 +253,35 @@ app.post("/auth/logout", (req, res) => {
   req.logout ? req.logout(done) : done();
 });
 
+// STUN만으로는 대칭 NAT이나 UDP를 막는 기관 와이파이에서 P2P가 성립하지 않는다.
+// TURN 자격증명은 무료 요금제도 가입해야 나오고 주기적으로 갈린다.
+// 코드에 박으면 바뀔 때마다 배포해야 하니 환경변수로 받아 클라에 내려준다.
+// TURN_URLS에 쉼표로 여러 개를 넣는다. 예:
+//   turn:standard.relay.metered.ca:80,turn:standard.relay.metered.ca:443?transport=tcp
+const TURN_URLS = String(process.env.TURN_URLS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const turnConfigured = TURN_URLS.length > 0 && Boolean(process.env.TURN_USERNAME);
+console.log(
+  turnConfigured
+    ? `[API] TURN 설정됨 (${TURN_URLS.length}개)`
+    : "[API] TURN 미설정. STUN만 쓴다. 막힌 망에서는 화면이 안 뜰 수 있다."
+);
+
+// 브라우저가 연결을 만들기 전에 한 번 받아 가는 창구.
+app.get("/api/ice", (req, res) => {
+  const list = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+  if (turnConfigured) {
+    list.push({
+      urls: TURN_URLS,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL || "",
+    });
+  }
+  res.json({ iceServers: list, turn: turnConfigured });
+});
+
 // 클라가 입장 화면에서 로그인 상태를 판단하는 창구.
 app.get("/api/me", (req, res) => {
   const user = req.user || null;
@@ -631,6 +660,8 @@ app.post("/api/records/reset", requireSpeaker, async (req, res) => {
 wss.on("connection", (ws, req, sessionUser) => {
   let currentRoomId = null;
   let clientId = null;
+  // ice 로그를 방향별로 한 번만 남기려고 센다. 이 연결이 끊기면 같이 사라진다.
+  const iceSeen = new Map();
 
   ws.on("message", (raw) => {
     let msg;
@@ -778,12 +809,24 @@ wss.on("connection", (ws, req, sessionUser) => {
 
     if (msg.type === "offer" || msg.type === "answer" || msg.type === "ice") {
       const target = room.clients.get(msg.to);
-      // ice는 연결마다 수십 개가 날아와 로그를 덮는다. offer와 answer만 남긴다.
-      if (msg.type !== "ice") {
-        console.log(
-          `[WS] type:${msg.type} from:${clientId} to:${msg.to} room:${currentRoomId} channel:${msg.channel || "-"}${target ? "" : " -> 대상없음"}`
-        );
+      // ice는 연결 하나에 수십 개가 날아와 로그를 덮는다.
+      // 그렇다고 다 숨기면 중계가 도는지 확인할 길이 없어진다.
+      // 방향마다 첫 건만 남기고 나머지는 센다. 대상이 없는 건은 문제니 언제나 남긴다.
+      let note = "";
+      if (msg.type === "ice") {
+        const key = `${clientId}>${msg.to}:${msg.channel || "-"}`;
+        const seen = (iceSeen.get(key) || 0) + 1;
+        iceSeen.set(key, seen);
+        if (seen > 1 && target) {
+          if (seen % 25 === 0) console.log(`[WS] type:ice from:${clientId} to:${msg.to} 누적:${seen}건`);
+          send(target.ws, { ...msg, from: clientId });
+          return;
+        }
+        note = seen === 1 ? " (첫 건, 이후 25건마다 표시)" : "";
       }
+      console.log(
+        `[WS] type:${msg.type} from:${clientId} to:${msg.to} room:${currentRoomId} channel:${msg.channel || "-"}${target ? "" : " -> 대상없음"}${note}`
+      );
       if (target) {
         send(target.ws, { ...msg, from: clientId });
       }
