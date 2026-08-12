@@ -38,7 +38,10 @@ function avatarColor(name) {
   return avatarPalette[Math.abs(hash) % avatarPalette.length];
 }
 
-const myId = randomId();
+// 서버가 같은 사람인지 가리는 유일한 근거다. 탭마다 다르고 새로고침해도 유지된다.
+// 이걸로 판정해야 동명이인이 서로를 쫓아내지 않는다.
+const myId = sessionStorage.getItem("soomClientId") || randomId();
+sessionStorage.setItem("soomClientId", myId);
 let myName = "";
 let myRoom = "";
 let ws = null;
@@ -74,7 +77,9 @@ const shareBtnLabel = document.getElementById("shareBtnLabel");
 const shareStatus = document.getElementById("shareStatus");
 const shareNote = document.getElementById("shareNote");
 const remoteVideo = document.getElementById("remoteVideo");
-const viewerFrame = document.getElementById("viewerFrame");
+const viewerWrap = document.getElementById("viewerWrap");
+const viewerFullBtn = document.getElementById("viewerFullBtn");
+const viewerFullLabel = document.getElementById("viewerFullLabel");
 const viewerPlaceholder = document.getElementById("viewerPlaceholder");
 const placeholderTitle = document.getElementById("placeholderTitle");
 const placeholderSub = document.getElementById("placeholderSub");
@@ -322,7 +327,7 @@ function onJoined(room, role) {
   // 강연자는 체험자 화면을 격자로 받고, 체험자는 강연자 시범 화면 하나를 본다.
   const speaker = role === "speaker";
   gridWrap.classList.toggle("hidden", !speaker);
-  viewerFrame.classList.toggle("hidden", speaker);
+  viewerWrap.classList.toggle("hidden", speaker);
   applyShareAvailability(speaker);
 
   setupRecords();
@@ -892,18 +897,22 @@ function closeCellZoom() {
   applyZoomState();
 }
 
-// 빔프로젝터로 쏠 때 격자만 전체 화면으로 띄운다.
-gridFullBtn.addEventListener("click", async () => {
-  if (document.fullscreenElement) {
-    await document.exitFullscreen();
-  } else {
-    await gridWrap.requestFullscreen().catch(() => {});
-  }
-});
+// 빔프로젝터로 쏠 때 화면만 전체로 띄운다.
+// 강연자는 격자를, 체험자는 강연자 시범 화면을 같은 방식으로 키운다.
+function toggleFullscreen(target) {
+  if (document.fullscreenElement) return document.exitFullscreen();
+  return target.requestFullscreen().catch(() => {});
+}
+gridFullBtn.addEventListener("click", () => toggleFullscreen(gridWrap));
+viewerFullBtn.addEventListener("click", () => toggleFullscreen(viewerWrap));
+
 document.addEventListener("fullscreenchange", () => {
-  const on = Boolean(document.fullscreenElement);
-  gridWrap.classList.toggle("is-full", on);
-  gridFullLabel.textContent = on ? "전체 화면 끄기" : "전체 화면으로 보기";
+  const el = document.fullscreenElement;
+  gridWrap.classList.toggle("is-full", el === gridWrap);
+  viewerWrap.classList.toggle("is-full", el === viewerWrap);
+  const label = el ? "전체 화면 끄기" : "전체 화면으로 보기";
+  gridFullLabel.textContent = label;
+  viewerFullLabel.textContent = label;
 });
 
 // ── 나가기 ──

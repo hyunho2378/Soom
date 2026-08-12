@@ -115,6 +115,15 @@
         </div>
 
         <!-- 체험자가 강연자 시범 화면을 보는 자리 -->
+        <div id="viewerWrap" class="viewer-wrap">
+        <div class="grid-head">
+          <!-- 이 자리는 강연자 시범 화면도, 내가 보내는 화면 미리보기도 띄운다 -->
+          <h2 class="grid-title">공유 화면</h2>
+          <button type="button" id="viewerFullBtn" class="btn-ghost btn-grid-full">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+            <span id="viewerFullLabel">전체 화면으로 보기</span>
+          </button>
+        </div>
         <div class="viewer-frame" id="viewerFrame">
           <video id="remoteVideo" autoplay playsinline></video>
           <div class="viewer-placeholder" id="viewerPlaceholder">
@@ -125,6 +134,7 @@
             <p class="placeholder-sub" id="placeholderSub">아래 버튼으로 내 화면을 공유해보세요.</p>
           </div>
           <div class="presenter-badge hidden" id="presenterBadge"></div>
+        </div>
         </div>
 
         <div class="share-controls">

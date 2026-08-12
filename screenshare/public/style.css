@@ -252,6 +252,15 @@ body.has-conn-bar .room-header{top:var(--conn-h)}
 .panel-live{--viewer-w:min(100%, calc((100dvh - 260px) * 16 / 9))}
 /* 격자가 보이면 공유 컨트롤은 격자 폭을 따른다 */
 .panel-live:has(.grid-wrap:not(.hidden)) .share-controls{width:100%}
+/* 체험자도 강연자 시범 화면을 전체 화면으로 본다. 격자 쪽과 같은 머리줄 구조를 쓴다 */
+.viewer-wrap{display:flex; flex-direction:column; gap:12px; min-width:0}
+.viewer-wrap .grid-head{width:var(--viewer-w); margin-inline:auto}
+/* 전체 화면에서는 남는 세로를 다 쓰도록 16대 9 고정을 풀고 높이로 묶는다 */
+.viewer-wrap.is-full{background:var(--bg); padding:16px; gap:10px; justify-content:center}
+.viewer-wrap.is-full .grid-head{width:100%}
+.viewer-wrap.is-full .viewer-frame{
+  width:auto; aspect-ratio:auto; flex:1 1 auto; min-height:0;
+}
 .viewer-frame{
   position:relative; width:var(--viewer-w); margin-inline:auto;
   aspect-ratio:16/9; background:var(--viewer);

@@ -700,18 +700,16 @@ wss.on("connection", (ws, req, sessionUser) => {
 
       const role = isSpeaker ? "speaker" : "viewer";
 
-      // C3. 같은 이름과 같은 역할로 다시 들어오면 앞선 연결은 끊긴 것으로 보고 자리를 넘겨준다.
-      for (const [oldId, c] of Array.from(room.clients)) {
-        if (oldId !== clientId && c.name === name && (c.role || "viewer") === role) {
-          console.log(`[Room] stale code:${code} ${oldId} -> ${clientId} name:${name}`);
-          room.clients.delete(oldId);
-          if (room.publishers) room.publishers.delete(oldId);
-          if (room.speakerWsId === oldId) room.speakerWsId = null;
-          if (room.broadcasterId === oldId) room.broadcasterId = null;
-          try {
-            c.ws.close();
-          } catch (e) {}
-        }
+      // C3. 같은 탭이 새 소켓으로 다시 붙으면 앞선 소켓은 죽은 것이다. 그 소켓만 닫는다.
+      // 이름으로 판정하면 안 된다. 동명이인이나 이름을 비운 사람들("익명")이 서로를 쫓아낸다.
+      // id는 탭마다 고유하고 새로고침해도 유지되므로 이것만이 같은 사람을 가린다.
+      // 공유 중이던 자리(publishers, speakerWsId)는 그대로 둔다. 같은 사람이 이어받기 때문이다.
+      const prev = room.clients.get(clientId);
+      if (prev && prev.ws !== ws) {
+        console.log(`[Room] stale code:${code} ${clientId} 소켓 교체 name:${name}`);
+        try {
+          prev.ws.close();
+        } catch (e) {}
       }
 
       currentRoomId = code;
@@ -838,6 +836,13 @@ wss.on("connection", (ws, req, sessionUser) => {
     if (!currentRoomId || !clientId) return;
     const room = rooms.get(currentRoomId);
     if (!room) return;
+    // 같은 탭이 새 소켓으로 이미 자리를 넘겨받았다면 이 닫힘은 버려진 옛 소켓의 것이다.
+    // 여기서 지우면 방금 들어온 본인을 내쫓는다.
+    const seat = room.clients.get(clientId);
+    if (seat && seat.ws !== ws) {
+      console.log(`[Room] 옛 소켓 닫힘 code:${currentRoomId} ${clientId} (자리는 유지)`);
+      return;
+    }
     room.clients.delete(clientId);
     console.log(`[Room] leave code:${currentRoomId} ${clientId}`);
     if (room.broadcasterId === clientId) {
