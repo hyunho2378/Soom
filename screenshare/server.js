@@ -563,9 +563,14 @@ app.post("/api/records", receiveFiles, async (req, res) => {
     return res.status(400).json({ error: "이미지는 한 장에 5MB까지 올릴 수 있습니다." });
   }
 
+  // 무료 플랜 RAM이 512MB다. 병렬로 올리면 큰 파일 여러 개가 한꺼번에 메모리에 남는다.
+  // 하나씩 올리고 끝난 버퍼는 즉시 참조를 끊는다.
   let uploaded = [];
   try {
-    uploaded = await Promise.all(files.map(putToBlob));
+    for (const f of files) {
+      uploaded.push(await putToBlob(f));
+      f.buffer = null;
+    }
   } catch (e) {
     console.error(`[API] error route:/api/records status:502 message:${e.message}`);
     await removeFromBlob(uploaded.map((f) => f.url));
@@ -752,7 +757,7 @@ wss.on("connection", (ws, req, sessionUser) => {
         console.log(`[WS] type:start-publish from:${clientId} room:${currentRoomId} -> rejected(정원 초과 ${MAX_PUBLISHERS})`);
         send(ws, {
           type: "publish-rejected",
-          reason: `한 번에 ${MAX_PUBLISHERS}명까지 공유할 수 있습니다. 한 명이 멈추면 다시 시도하세요.`,
+          reason: `현재 공유 가능 인원이 꽉 찼습니다. 한 명이 멈추면 다시 시도하세요(최대 ${MAX_PUBLISHERS}명).`,
         });
         return;
       }

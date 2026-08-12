@@ -60,6 +60,7 @@ const leaveBtn = document.getElementById("leaveBtn");
 const shareBtn = document.getElementById("shareBtn");
 const shareBtnLabel = document.getElementById("shareBtnLabel");
 const shareStatus = document.getElementById("shareStatus");
+const shareNote = document.getElementById("shareNote");
 const remoteVideo = document.getElementById("remoteVideo");
 const viewerFrame = document.getElementById("viewerFrame");
 const viewerPlaceholder = document.getElementById("viewerPlaceholder");
@@ -310,7 +311,7 @@ function onJoined(room, role) {
   const speaker = role === "speaker";
   gridWrap.classList.toggle("hidden", !speaker);
   viewerFrame.classList.toggle("hidden", speaker);
-  setShareButton(false, speaker ? "시범 공유 시작하기" : "내 화면 공유하기");
+  applyShareAvailability(speaker);
 
   setupRecords();
 
@@ -324,6 +325,25 @@ function onJoined(room, role) {
       // 스트림이 이미 죽었으면 버튼만 원래대로 돌린다.
       speaker ? stopDemo(false) : stopPublishing(false);
     }
+  }
+}
+
+// D2. getDisplayMedia는 iOS 사파리에 없고 안드로이드도 제한적이다. 모바일이면 공유를 막고 이유를 알린다.
+function screenShareBlocked() {
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== "function") return true;
+  // 손가락만 있는 기기(휴대폰, 태블릿)를 막는다. 터치 노트북은 정밀 포인터가 함께 있어 통과한다.
+  const coarse = window.matchMedia("(pointer: coarse)").matches;
+  const hasFine = window.matchMedia("(any-pointer: fine)").matches;
+  return coarse && !hasFine;
+}
+
+function applyShareAvailability(speaker) {
+  setShareButton(false, speaker ? "시범 공유 시작하기" : "내 화면 공유하기");
+  const blocked = screenShareBlocked();
+  shareBtn.disabled = blocked;
+  shareNote.classList.toggle("hidden", !blocked);
+  if (blocked) {
+    shareNote.textContent = "화면 공유는 PC에서만 가능합니다. 기록물 올리기는 그대로 쓸 수 있습니다.";
   }
 }
 
@@ -1042,7 +1062,7 @@ function fileShape(file) {
 }
 
 function fileIconSvg(kind, size = 20) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FILE_ICONS[kind] || FILE_ICONS.file}</svg>`;
+  return `<svg class="file-icon icon-${kind}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FILE_ICONS[kind] || FILE_ICONS.file}</svg>`;
 }
 
 function formatBytes(n) {
