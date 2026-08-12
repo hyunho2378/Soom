@@ -45,6 +45,7 @@ const PRACTICE_ITEMS = [
 const ITEM_MAP = new Map(PRACTICE_ITEMS.map((it) => [it.code, it]));
 
 // 정본은 DB의 records와 record_files다. 아래 Map은 방마다 한 번만 읽어 두는 캐시다.
+// 키는 rooms.id를 문자열로 만든 값이다. 코드는 방을 닫으면 재사용되므로 키로 쓰면 안 된다.
 // DB가 없으면 이 Map만으로 동작한다(영속화 없음).
 const roomRecords = new Map();
 
@@ -68,17 +69,17 @@ function toRecord(row, files) {
   };
 }
 
-// 방 기록물을 처음 볼 때 DB에서 한 번 읽어 캐시에 채운다.
-async function loadRoomRecords(room) {
-  if (roomRecords.has(room)) return roomRecords.get(room);
+// 방 기록물을 처음 볼 때 DB에서 한 번 읽어 캐시에 채운다. roomId는 rooms.id 문자열이다.
+async function loadRoomRecords(roomId) {
+  if (roomRecords.has(roomId)) return roomRecords.get(roomId);
   if (!db.isEnabled()) {
-    roomRecords.set(room, []);
+    roomRecords.set(roomId, []);
     return [];
   }
   try {
     const { rows } = await db.query(
-      "SELECT * FROM records WHERE room = $1 ORDER BY created_at, id",
-      [room]
+      "SELECT * FROM records WHERE room_id = $1 ORDER BY created_at, id",
+      [roomId]
     );
     const ids = rows.map((r) => r.id);
     const filesByRecord = new Map(ids.map((id) => [String(id), []]));
@@ -90,17 +91,17 @@ async function loadRoomRecords(room) {
       fileRows.forEach((f) => filesByRecord.get(String(f.record_id)).push(f));
     }
     const list = rows.map((r) => toRecord(r, filesByRecord.get(String(r.id))));
-    roomRecords.set(room, list);
+    roomRecords.set(roomId, list);
     return list;
   } catch (e) {
-    console.error("기록물 불러오기 실패:", e.message);
-    roomRecords.set(room, []);
+    console.error(`[API] error route:loadRoomRecords status:500 message:${e.message}`);
+    roomRecords.set(roomId, []);
     return [];
   }
 }
 
 // 기록물 한 건을 DB에 넣고 클라이언트 모양으로 돌려준다.
-async function insertRecord({ room, name, userId, item, summary, files }) {
+async function insertRecord({ roomId, name, userId, item, summary, files }) {
   if (!db.isEnabled()) {
     return {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -114,9 +115,9 @@ async function insertRecord({ room, name, userId, item, summary, files }) {
     };
   }
   const { rows } = await db.query(
-    `INSERT INTO records (room, author_name, author_user_id, item_code, item_label, track, summary)
+    `INSERT INTO records (room_id, author_name, author_user_id, item_code, item_label, track, summary)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [room, name, userId, item.code, item.label, item.track, summary]
+    [roomId, name, userId, item.code, item.label, item.track, summary]
   );
   const row = rows[0];
   const saved = [];
@@ -279,9 +280,10 @@ function requireSpeaker(req, res, next) {
 }
 
 // 활성 방과 겹치지 않는 4자리 코드를 뽑는다.
+// 1000~9999. 선행 0을 쓰지 않아 사람이 불러주기 쉽다.
 function newRoomCode() {
   for (let i = 0; i < 200; i++) {
-    const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    const code = String(1000 + Math.floor(Math.random() * 9000));
     if (!rooms.has(code)) return code;
   }
   throw new Error("빈 방 코드를 찾지 못했습니다.");
@@ -315,11 +317,23 @@ app.post("/api/rooms", requireSpeaker, async (req, res) => {
       for (const r of rows) await closeRoom(r.code, "강연자가 새 방을 열었습니다.");
     }
     const code = newRoomCode();
-    rooms.set(code, { clients: new Map(), broadcasterId: null, speakerUserId: req.user.id, speakerWsId: null, publishers: new Set() });
-    console.log(`[Room] created code:${code} speaker:${req.user.id}`);
+    let roomId = code; // DB가 없으면 코드를 그대로 키로 쓴다
     if (db.isEnabled()) {
-      await db.query("INSERT INTO rooms (code, speaker_user_id) VALUES ($1, $2)", [code, req.user.id]);
+      const { rows } = await db.query(
+        "INSERT INTO rooms (code, speaker_user_id) VALUES ($1, $2) RETURNING id",
+        [code, req.user.id]
+      );
+      roomId = String(rows[0].id);
     }
+    rooms.set(code, {
+      id: roomId,
+      clients: new Map(),
+      broadcasterId: null,
+      speakerUserId: req.user.id,
+      speakerWsId: null,
+      publishers: new Set(),
+    });
+    console.log(`[Room] created code:${code} room_id:${roomId} speaker:${req.user.id}`);
     res.json({ code });
   } catch (e) {
     console.error(`[API] error route:/api/rooms status:500 message:${e.message}`);
@@ -522,16 +536,17 @@ function receiveFiles(req, res, next) {
 }
 
 app.post("/api/records", receiveFiles, async (req, res) => {
-  const room = String(req.body.room || "").trim();
+  const code = String(req.body.room || "").trim();
   const name = String(req.body.name || "익명").trim().slice(0, 20) || "익명";
   const itemCode = String(req.body.itemCode || "").trim();
   const summary = String(req.body.summary || "").trim().slice(0, 2000);
   const item = ITEM_MAP.get(itemCode);
   const files = req.files || [];
+  const room = rooms.get(code);
 
   // 메모리로만 받았으므로 거절할 때 지울 디스크 파일이 없다.
   if (!room || !item) {
-    return res.status(400).json({ error: "방 이름과 실습 항목을 확인하세요." });
+    return res.status(400).json({ error: "참여 코드와 실습 항목을 확인하세요." });
   }
   if (!summary && files.length === 0) {
     return res.status(400).json({ error: "결과 요약이나 파일을 하나 이상 올리세요." });
@@ -561,7 +576,7 @@ app.post("/api/records", receiveFiles, async (req, res) => {
   try {
     // itemLabel과 track은 서버 정본(PRACTICE_ITEMS)에서만 채운다.
     record = await insertRecord({
-      room,
+      roomId: room.id,
       name,
       userId: req.user ? req.user.id : null,
       item,
@@ -574,36 +589,37 @@ app.post("/api/records", receiveFiles, async (req, res) => {
     return res.status(500).json({ error: "기록물을 저장하지 못했습니다." });
   }
 
-  const list = await loadRoomRecords(room);
+  const list = await loadRoomRecords(room.id);
   list.push(record);
 
-  console.log(`[API] POST /api/records room:${room} files:${uploaded.length}`);
-  broadcastToRoom(room, { type: "record-added", record });
+  console.log(`[API] POST /api/records room_id:${room.id} files:${uploaded.length}`);
+  broadcastToRoom(code, { type: "record-added", record });
   res.json({ ok: true, record });
 });
 
 // 강연자용 전체 초기화. 확인 문구가 정확히 일치할 때만 실행한다.
 app.post("/api/records/reset", requireSpeaker, async (req, res) => {
-  const room = String(req.body.room || "").trim();
+  const code = String(req.body.room || "").trim();
   const confirm = String(req.body.confirm || "").trim();
+  const room = rooms.get(code);
   if (!room) return res.status(400).json({ error: "방 정보가 없습니다." });
   if (confirm !== "초기화") {
     return res.status(400).json({ error: "확인 문구가 일치하지 않습니다." });
   }
 
-  const list = await loadRoomRecords(room);
+  const list = await loadRoomRecords(room.id);
   // Blob 파일을 먼저 지우고, DB 행은 records를 지우면 record_files가 CASCADE로 함께 사라진다.
   const urls = list.flatMap((r) => (r.files || []).map((f) => f.url));
-  console.log(`[API] POST /api/records/reset room:${room} deleted:${list.length}records ${urls.length}files`);
+  console.log(`[API] POST /api/records/reset room_id:${room.id} deleted:${list.length}records ${urls.length}files`);
   await removeFromBlob(urls);
   if (db.isEnabled()) {
-    await db.query("DELETE FROM records WHERE room = $1", [room]).catch((e) => {
-      console.error("기록물 삭제 실패:", e.message);
+    await db.query("DELETE FROM records WHERE room_id = $1", [room.id]).catch((e) => {
+      console.error(`[API] error route:/api/records/reset status:500 message:${e.message}`);
     });
   }
-  roomRecords.set(room, []);
+  roomRecords.set(room.id, []);
 
-  broadcastToRoom(room, { type: "records-reset" });
+  broadcastToRoom(code, { type: "records-reset" });
   res.json({ ok: true });
 });
 
@@ -646,7 +662,7 @@ wss.on("connection", (ws, req, sessionUser) => {
       broadcastParticipants(currentRoomId);
 
       // 이 방의 기존 기록물을 새로 들어온 사람에게 보낸다.
-      loadRoomRecords(currentRoomId).then((list) => send(ws, { type: "records-init", list }));
+      loadRoomRecords(room.id).then((list) => send(ws, { type: "records-init", list }));
 
       // 이미 발표 중인 사람이 있으면, 새로 들어온 사람에게 알려준다.
       if (room.broadcasterId && room.broadcasterId !== clientId) {
@@ -769,9 +785,10 @@ const PORT = process.env.PORT || 3000;
 async function restoreRooms() {
   if (!db.isEnabled()) return 0;
   try {
-    const { rows } = await db.query("SELECT code, speaker_user_id FROM rooms WHERE active = true");
+    const { rows } = await db.query("SELECT id, code, speaker_user_id FROM rooms WHERE active = true");
     rows.forEach((r) => {
       rooms.set(r.code, {
+        id: String(r.id),
         clients: new Map(),
         broadcasterId: null,
         speakerUserId: r.speaker_user_id === null ? null : String(r.speaker_user_id),

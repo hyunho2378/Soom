@@ -434,3 +434,37 @@ multer limits, 파일 타입 6종, UI 6-1~6-5)은 확인만 하고 다시 만들
 - [Room] closed 확인. [Room] leave는 방이 살아 있을 때의 정상 이탈에서 확인했다
   (방을 닫으면 방이 먼저 사라져 close 핸들러가 조기 반환하므로 leave를 남기지 않는다. 의도된 동작).
 - 없는 코드 입장 거절도 [WS] type:join -> rejected(없는 코드)로 남는다.
+
+## BUILD_SPEC v2 B그룹: 스키마 정합성 (2026-08-12)
+
+### B1. records.room(TEXT 코드) -> records.room_id(FK)
+- 코드는 방을 닫으면 재사용된다. 코드만 저장하면 옛 기록물이 새 방에 섞인다. FK로 방 인스턴스를 정확히 가리킨다.
+- db/schema.sql에 멱등 마이그레이션을 넣었다. records에 room 컬럼이 있을 때만 도는 DO 블록으로,
+  room_id 추가 후 코드로 방을 찾아 채우고(같은 코드가 여럿이면 가장 최근 방), 가리킬 방이 없는 행은 지우고,
+  NOT NULL을 걸고 room 컬럼을 떨어뜨린다. 새 DB에서는 아무것도 하지 않는다.
+- 서버: rooms Map 값에 id(rooms.id 문자열)를 담는다. POST /api/rooms는 INSERT ... RETURNING id로 받는다.
+  재기동 복구도 id를 함께 싣는다. roomRecords 캐시 키와 loadRoomRecords, insertRecord, reset이 전부 room_id 기준이다.
+  WS 브로드캐스트는 그대로 코드 기준(브로드캐스트는 연결 대상이지 데이터가 아니다).
+
+### B2. rooms partial unique index
+- CREATE UNIQUE INDEX ... ON rooms(code) WHERE active = true. 코드 발급 레이스를 DB가 막는다.
+- 인덱스를 만들기 전에 활성 코드가 겹치면 오래된 쪽을 닫는 UPDATE를 먼저 돌린다. 안 그러면 인덱스 생성이 실패한다.
+
+### B3. 코드 범위
+- 0000~9999에서 1000~9999로 바꿨다. 선행 0이 없어 사람이 불러주기 쉽다.
+
+### 마이그레이션 중 찾아 고친 것
+- 처음에 CREATE INDEX idx_records_room_id를 마이그레이션 DO 블록보다 앞에 뒀더니
+  기존 DB에서 room_id가 아직 없어 "column room_id does not exist"로 스키마 적용이 통째로 실패했다.
+  다중 문 쿼리라 전부 롤백돼 데이터 손상은 없었다. 인덱스를 DO 블록 뒤로 옮겨 해결했다.
+
+### 검증
+- 실제 마이그레이션: 실사용자 기록물 1건(room "6681")이 room_id 44로 정확히 옮겨졌고 첨부 1건도 보존됐다.
+  records 컬럼에서 room이 사라지고 room_id가 생겼다. 인덱스 3개 확인(idx_records_room_id,
+  idx_rooms_active_code, idx_rooms_active_code_unique).
+- B그룹 7개 항목 통과. 코드 6개가 전부 1000~9999에 선행 0 없음, 강연자당 활성 방 1개 유지,
+  기록물이 room_id로 저장, 같은 코드를 재사용해도 옛 기록물이 새 방에 안 섞임(옛 방 1건 새 방 0건),
+  활성 코드 중복 INSERT가 23505로 거절, 방을 닫으면 같은 코드 재사용 가능.
+- room_id 전환 경로 회귀 8개 항목 통과. speaker 판정, records-init, 기록물 등록,
+  record-added 실시간, 재기동 후 speaker 유지와 기록물 유지(room_id로 로드), 초기화 브로드캐스트와 DB 비움.
+- 화면 공유 회귀 4개 항목 통과(브라우저 2대). 격자 재생, P2P 133KB와 프레임 36, 공유자 자기 화면, 콘솔 예외 0건.
