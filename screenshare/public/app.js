@@ -442,6 +442,11 @@ async function startPublishing() {
   isBroadcaster = true;
   setShareButton(true, "공유 중지");
   shareStatus.textContent = "내 화면을 강연자에게 보내고 있습니다.";
+  // 보내는 사람도 자기가 무엇을 보내는지 봐야 한다. 강연자 시범을 볼 때와 같은 자리에 띄운다.
+  remoteVideo.srcObject = myPublishStream;
+  setPlaceholder("gone");
+  presenterBadge.classList.remove("hidden");
+  presenterBadge.textContent = "내 화면을 보내는 중";
   sendSignal({ type: "start-publish" });
 }
 
@@ -472,6 +477,10 @@ function stopPublishing(notifyServer) {
   publishTargetId = null;
   setShareButton(false, "내 화면 공유하기");
   shareStatus.textContent = "";
+  // 내 화면 미리보기를 걷는다. 강연자 시범이 돌고 있으면 그 화면이 다시 들어온다.
+  remoteVideo.srcObject = null;
+  presenterBadge.classList.add("hidden");
+  setPlaceholder("idle");
   if (notifyServer) sendSignal({ type: "stop-publish" });
 }
 

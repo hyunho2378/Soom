@@ -234,6 +234,13 @@ app.get("/api/me", (req, res) => {
 // ── 방(코드 기반 입장) ──
 // 실시간 상태는 아래 rooms Map에 두고, DB rooms 표는 강연자 새로고침 시 코드 복구용이다.
 
+// pg는 BIGSERIAL을 문자열로 준다. 세션에 담긴 id와 방에 담긴 id의 타입이 경로마다 달라질 수 있어
+// 사용자 비교는 반드시 이 함수로만 한다. 여기서 어긋나면 강연자가 자기 방에서 체험자로 강등된다.
+function sameUser(a, b) {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+}
+
 function requireSpeaker(req, res, next) {
   if (!req.user) return res.status(401).json({ error: "강연자로 로그인해야 합니다." });
   if (!canSpeak(req.user)) return res.status(403).json({ error: "강연자 권한이 없는 계정입니다." });
@@ -290,7 +297,7 @@ app.post("/api/rooms", requireSpeaker, async (req, res) => {
 app.post("/api/rooms/close", requireSpeaker, async (req, res) => {
   const code = String(req.body.code || "").trim();
   const room = rooms.get(code);
-  if (room && room.speakerUserId !== req.user.id) {
+  if (room && !sameUser(room.speakerUserId, req.user.id)) {
     return res.status(403).json({ error: "이 방의 강연자가 아닙니다." });
   }
   await closeRoom(code, "강연자가 방을 종료했습니다.");
@@ -307,7 +314,7 @@ app.get("/api/rooms/:code", (req, res) => {
 // 강연자가 새로고침해도 자기 방 코드를 되찾는다.
 app.get("/api/my-room", requireSpeaker, (req, res) => {
   for (const [code, room] of rooms) {
-    if (room.speakerUserId === req.user.id) return res.json({ code });
+    if (sameUser(room.speakerUserId, req.user.id)) return res.json({ code });
   }
   res.json({ code: null });
 });
@@ -592,7 +599,7 @@ wss.on("connection", (ws, req, sessionUser) => {
       }
 
       // 클라가 role을 실어 보내도 믿지 않는다. 세션으로 다시 판정한다.
-      const isSpeaker = Boolean(sessionUser) && canSpeak(sessionUser) && room.speakerUserId === sessionUser.id;
+      const isSpeaker = Boolean(sessionUser) && canSpeak(sessionUser) && sameUser(room.speakerUserId, sessionUser.id);
       currentRoomId = code;
       room.clients.set(clientId, { ws, name, role: isSpeaker ? "speaker" : "viewer" });
       if (isSpeaker) room.speakerWsId = clientId;
@@ -715,7 +722,7 @@ async function restoreRooms() {
       rooms.set(r.code, {
         clients: new Map(),
         broadcasterId: null,
-        speakerUserId: r.speaker_user_id === null ? null : Number(r.speaker_user_id),
+        speakerUserId: r.speaker_user_id === null ? null : String(r.speaker_user_id),
         speakerWsId: null,
         publishers: new Set(),
       });
